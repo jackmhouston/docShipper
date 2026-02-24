@@ -1,0 +1,32 @@
+# DocShipper Dependencies
+# Video editing document automation tool
+
+# Core Framework
+streamlit>=1.32.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Excel Handling
+openpyxl>=3.1.0
+
+# Fuzzy String Matching (for template analysis)
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.21.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# Audio Metadata (for music cue extraction)
+pymediainfo>=6.1.0
+
+# Note: FFmpeg and FFprobe must be installed separately
+# macOS: brew install ffmpeg
+# Ubuntu: sudo apt install ffmpeg
+# Windows: Download from https://ffmpeg.org/download.html
+
+# Note: MediaInfo must be installed for music cue functionality
+# macOS: brew install mediainfo
+# Ubuntu: sudo apt install mediainfo
+# Windows: Download from https://mediaarea.net/en/MediaInfo
