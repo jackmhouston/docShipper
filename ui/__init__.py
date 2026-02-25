@@ -1,26 +1,30 @@
 """
 UI Component Library for DocShipper
-Modern, minimal design with blue/gold palette
+Minimal B/W design with page-based wizard components
 """
 
-from ui.tokens import COLORS, FONTS, FONT_SIZES, SPACING, BORDERS
+from ui.tokens import COLORS, FONTS, FONT_SIZES, SPACING, BORDERS, GRID
 from ui.styles import get_global_css, inject_styles
 from ui.components import (
-    page_header,
+    landing_header,
+    workflow_button,
+    step_indicator,
+    page_title,
     section_header,
-    card,
-    info_box,
-    file_upload_card,
+    nav_buttons,
+    render_interactive_grid,
+    field_checkboxes,
+    field_assignment_panel,
     status_badge,
-    progress_bar,
+    file_status,
+    status_row,
+    info_box,
+    divider,
     primary_button,
     secondary_button,
-    status_summary,
-    field_label,
     data_table,
-    section_divider,
-    file_status_message,
-    mapping_display,
+    mapping_summary,
+    xml_detection_card,
 )
 
 __all__ = [
@@ -30,23 +34,28 @@ __all__ = [
     "FONT_SIZES",
     "SPACING",
     "BORDERS",
+    "GRID",
     # Styles
     "get_global_css",
     "inject_styles",
     # Components
-    "page_header",
+    "landing_header",
+    "workflow_button",
+    "step_indicator",
+    "page_title",
     "section_header",
-    "card",
-    "info_box",
-    "file_upload_card",
+    "nav_buttons",
+    "render_interactive_grid",
+    "field_checkboxes",
+    "field_assignment_panel",
     "status_badge",
-    "progress_bar",
+    "file_status",
+    "status_row",
+    "info_box",
+    "divider",
     "primary_button",
     "secondary_button",
-    "status_summary",
-    "field_label",
     "data_table",
-    "section_divider",
-    "file_status_message",
-    "mapping_display",
+    "mapping_summary",
+    "xml_detection_card",
 ]

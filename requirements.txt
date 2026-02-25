@@ -21,6 +21,9 @@ Pillow>=10.0.0
 # Audio Metadata (for music cue extraction)
 pymediainfo>=6.1.0
 
+# Security
+defusedxml>=0.7.0
+
 # Note: FFmpeg and FFprobe must be installed separately
 # macOS: brew install ffmpeg
 # Ubuntu: sudo apt install ffmpeg

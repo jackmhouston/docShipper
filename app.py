@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 DocShipper - Video Editing Document Automation
-Combines shotlist generation and music cue sheet workflows
+Page-based wizard interface with minimal B/W aesthetic
+XML-first unified workflow
 """
 
+import atexit
 import streamlit as st
 import pandas as pd
 from pathlib import Path
@@ -12,29 +14,41 @@ import os
 import logging
 from typing import Dict, Optional
 
+import defusedxml.ElementTree as ET
+
 # Import UI components
 from ui import inject_styles
 from ui.components import (
-    page_header,
+    _num_to_col,
+    landing_header,
+    workflow_button,
+    step_indicator,
+    page_title,
     section_header,
-    progress_bar,
+    nav_buttons,
+    render_interactive_grid,
+    field_checkboxes,
+    field_assignment_panel,
+    file_status,
+    status_row,
+    divider,
     primary_button,
     secondary_button,
-    status_summary,
-    section_divider,
-    file_status_message,
-    mapping_display,
+    data_table,
+    xml_detection_card,
 )
 
 # Import processors
-from processors.video_processor import VideoProcessor, EDLParser, XMLParser, VideoAnalyzer
+from processors.video_processor import VideoProcessor, XMLParser, VideoAnalyzer
 from processors.excel_analyzer import AdvancedExcelAnalyzer
-from processors.music_processor import MusicCueProcessor
+from processors.music_processor import MusicCueProcessor, AUDIO_EXTENSIONS
+
+from urllib.parse import unquote
 
 st.set_page_config(
     page_title="DocShipper",
     page_icon="",
-    layout="wide",
+    layout="centered",
     initial_sidebar_state="collapsed"
 )
 
@@ -45,28 +59,41 @@ logger = logging.getLogger(__name__)
 inject_styles()
 
 
+def _cleanup_temp_files():
+    """Clean up temporary files created during the session."""
+    if '_temp_files' in st.session_state:
+        for path in st.session_state._temp_files:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except OSError:
+                pass
+
+
 class DocShipper:
-    """Main application class for DocShipper."""
+    """Main application class for DocShipper - Page-based wizard."""
 
-    FIELD_NAMES = {
-        'clip_name': 'Clip/Source File Name',
-        'src_start': 'Source Start Time',
-        'src_end': 'Source End Time',
-        'rec_start': 'Record Start Time',
-        'rec_end': 'Record End Time',
-        'duration': 'Duration',
-        'screenshot': 'Screenshot/Image'
-    }
-
-    FIELD_INFO = {
+    # Field definitions
+    FIELDS = {
         'clip_name': ('Clip Name', 'Source media filename'),
         'src_start': ('Source Start', 'Start timecode from source'),
         'src_end': ('Source End', 'End timecode from source'),
         'rec_start': ('Record Start', 'Timeline start timecode'),
         'rec_end': ('Record End', 'Timeline end timecode'),
         'duration': ('Duration', 'Clip length'),
-        'screenshot': ('Screenshot', 'Video thumbnail')
+        'screenshot': ('Screenshot', 'Video thumbnail image')
     }
+
+    FIELD_NAMES = {k: v[0] for k, v in FIELDS.items()}
+
+    # Required fields that cannot be unchecked
+    REQUIRED_FIELDS = ['clip_name', 'src_start', 'src_end']
+
+    # Shotlist / Both step labels (shared)
+    SHOTLIST_STEPS = ['Template', 'Video', 'Mapping', 'Settings', 'Generate', 'Download']
+
+    # Cue sheet step labels (simplified)
+    CUESHEET_STEPS = ['Generate', 'Download']
 
     def __init__(self):
         self.analyzer = AdvancedExcelAnalyzer()
@@ -77,664 +104,665 @@ class DocShipper:
     def init_session_state(self):
         """Initialize all session state variables."""
         defaults = {
-            # Workflow selection
-            'active_workflow': 'shotlist',
+            # Navigation state
+            'current_workflow': None,  # 'shotlist' | 'cuesheet' | 'both' | None
+            'shotlist_step': 1,  # 1-6
+            'cuesheet_step': 1,  # 1-2
+
+            # Unified XML source
+            'source_xml_path': None,
+            'source_xml_name': None,
+            'xml_info': None,  # {video_count, audio_count, fps, project_title}
+            'xml_video_data': None,  # Parsed video clips from XML
+            'xml_video_count': 0,
 
             # Shotlist workflow state
-            'shotlist_section': 1,
-            'shotlist_progress': 0,
+            'use_template': True,
             'template_path': None,
-            'edl_path': None,
-            'edl_data': None,
-            'edl_event_count': 0,
+            'template_data': None,
             'video_path': None,
             'video_fps': None,
             'output_dir': None,
             'mappings': {},
-            'use_custom_template': False,
-            'custom_template_mappings': {},
+            'selected_fields': ['clip_name', 'src_start', 'src_end'],
+            'field_order': ['clip_name', 'src_start', 'src_end'],
+            'mapping_selected_col': None,
+            'mapping_swap_mode': False,
             'screenshot_width': 203,
             'screenshot_height': 120,
             'screenshot_quality': 2,
             'disable_screenshots': False,
-            'guessed_show_name': None,
             'shotlist_complete': False,
             'shotlist_result_files': {},
 
             # Music cue workflow state
-            'music_section': 1,
-            'music_progress': 0,
-            'xml_path': None,
-            'cue_template_path': None,
-            'cue_output_dir': None,
-            'filter_keyword': 'alibi',
             'music_complete': False,
             'music_result_files': {},
             'cue_count': 0,
+
+            # Both mode state
+            'both_complete': False,
+            'both_result_files': {},
+
+            # Temp file tracking
+            '_temp_files': [],
         }
 
         for key, value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = value
 
+    def _track_temp_file(self, path: str):
+        """Register a temp file for cleanup when session ends."""
+        if '_temp_files' not in st.session_state:
+            st.session_state._temp_files = []
+        st.session_state._temp_files.append(path)
+
+    @staticmethod
+    def _build_mappings_from_field_order(field_order: list) -> dict:
+        """Convert ordered field list to sequential column mappings starting at row 2."""
+        mappings = {}
+        for i, field_key in enumerate(field_order):
+            col_letter = _num_to_col(i + 1)
+            mappings[field_key] = f'{col_letter}2'
+        return mappings
+
+    @staticmethod
+    def _field_order_from_mappings(mappings: dict) -> list:
+        """Derive field_order from a mappings dict by sorting on column index."""
+        def _col_to_num(cell_ref: str) -> int:
+            col_str = ''.join(c for c in cell_ref if c.isalpha())
+            num = 0
+            for c in col_str.upper():
+                num = num * 26 + (ord(c) - ord('A') + 1)
+            return num
+        return sorted(mappings.keys(), key=lambda k: _col_to_num(mappings[k]))
+
+    @staticmethod
+    def _detect_xml_contents(xml_path: str) -> dict:
+        """Analyze a Premiere XML file and return content summary.
+
+        Returns dict with: video_count, audio_count, fps, project_title
+        """
+        info = {
+            'video_count': 0,
+            'audio_count': 0,
+            'fps': None,
+            'project_title': '',
+        }
+
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+        except Exception as e:
+            logger.error(f"Failed to parse XML for detection: {e}")
+            return info
+
+        # Project title from sequence name
+        sequence = root.find('.//sequence')
+        if sequence is not None:
+            name_elem = sequence.find('name')
+            if name_elem is not None and name_elem.text:
+                info['project_title'] = name_elem.text
+
+        # Video clip count via XMLParser
+        parser = XMLParser()
+        video_clips = parser.parse(xml_path)
+        info['video_count'] = len(video_clips)
+        info['fps'] = parser.get_frame_rate()
+
+        # Audio file count by extension
+        seen_audio = set()
+        for file_elem in root.findall('.//file'):
+            pathurl = file_elem.find('pathurl')
+            if pathurl is not None and pathurl.text:
+                clean = unquote(pathurl.text.replace('file://localhost', ''))
+                ext = os.path.splitext(clean)[1].lower()
+                if ext in AUDIO_EXTENSIONS:
+                    seen_audio.add(clean)
+        info['audio_count'] = len(seen_audio)
+
+        return info
+
     def run(self):
-        """Main application entry point."""
-        page_header("DocShipper", "Video Editing Document Automation")
+        """Main application entry point - route to correct page."""
+        workflow = st.session_state.current_workflow
 
-        # Workflow tabs
-        tab1, tab2 = st.tabs(["Shotlist Generator", "Music Cue Sheet"])
+        if workflow is None:
+            self.render_landing()
+        elif workflow == 'shotlist':
+            self.render_shotlist()
+        elif workflow == 'cuesheet':
+            self.render_cuesheet()
+        elif workflow == 'both':
+            self.render_both()
 
-        with tab1:
-            self.shotlist_workflow()
+    # ========== LANDING PAGE ==========
 
-        with tab2:
-            self.music_cue_workflow()
+    def render_landing(self):
+        """Render the XML-first landing page."""
+        landing_header()
 
-    # ========== SHOTLIST WORKFLOW ==========
+        xml_info = st.session_state.xml_info
 
-    def shotlist_workflow(self):
-        """Complete shotlist generation workflow."""
-        st.markdown("**Generate shotlists from EDL files with automatic screenshots**")
+        if xml_info is None:
+            # State 1: No XML uploaded yet
+            st.caption("Export from Premiere Pro: File > Export > Final Cut Pro XML")
 
-        # Section 1: Setup Files
-        self.shotlist_section_1()
-
-        # Section 2: Configure Mappings
-        self.shotlist_section_2()
-
-        # Section 3: Review and Adjust
-        self.shotlist_section_3()
-
-        # Section 4: Generate
-        self.shotlist_section_4()
-
-    def shotlist_section_1(self):
-        """Shotlist Section 1: Setup Files."""
-        with st.expander("1. Setup Files", expanded=(st.session_state.shotlist_section == 1)):
-            section_header("Media Files")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("**EDL/XML File**")
-                edl_file = st.file_uploader(
-                    "EDL/XML File",
-                    type=['edl', 'xml'],
-                    key="edl_upload",
-                    help="Edit Decision List (.edl) or Premiere XML (.xml)"
-                )
-
-                if edl_file:
-                    suffix = Path(edl_file.name).suffix.lower() or '.edl'
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                        tmp_file.write(edl_file.getvalue())
-                        st.session_state.edl_path = tmp_file.name
-
-                    try:
-                        parser = XMLParser() if suffix == '.xml' else EDLParser()
-                        edl_data = parser.parse(st.session_state.edl_path)
-                        st.session_state.edl_event_count = len(edl_data)
-                        file_status_message(edl_file.name, f"{len(edl_data)} events")
-                    except Exception as e:
-                        file_status_message(edl_file.name)
-
-            with col2:
-                st.markdown("**Video File**")
-                video_file = st.file_uploader(
-                    "Video File",
-                    type=["mp4", "mov", "mxf", "m4v"],
-                    key="video_upload",
-                    help="Source video for screenshots"
-                )
-
-                if video_file:
-                    suffix = ''.join(Path(video_file.name).suffixes) or '.mp4'
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_vid:
-                        tmp_vid.write(video_file.getvalue())
-                        st.session_state.video_path = tmp_vid.name
-
-                    st.session_state.output_dir = str(Path(st.session_state.video_path).parent)
-
-                    try:
-                        analyzer = VideoAnalyzer()
-                        fps = analyzer.get_video_frame_rate(st.session_state.video_path)
-                        st.session_state.video_fps = fps
-                        file_status_message(video_file.name, f"{fps} fps")
-                    except:
-                        file_status_message(video_file.name)
-
-            section_divider()
-            section_header("Excel Template")
-
-            template_mode = st.radio(
-                "Template Mode",
-                ["Load Existing Template", "Create Custom Template"],
-                index=1 if st.session_state.use_custom_template else 0,
-                horizontal=True,
-                key="template_mode"
+            xml_file = st.file_uploader(
+                "Premiere Pro XML",
+                type=['xml'],
+                key="landing_xml_upload",
+                help="XML export from Adobe Premiere Pro",
+                label_visibility="collapsed"
             )
 
-            if template_mode == "Load Existing Template":
-                st.session_state.use_custom_template = False
-                template_file = st.file_uploader(
-                    "Excel Template",
-                    type=['xlsx', 'xls'],
-                    key="template_upload",
-                    help="Your existing shotlist Excel template"
-                )
+            if xml_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xml') as tmp:
+                    tmp.write(xml_file.getvalue())
+                    st.session_state.source_xml_path = tmp.name
+                    st.session_state.source_xml_name = xml_file.name
+                    self._track_temp_file(tmp.name)
 
-                if template_file:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                        tmp_file.write(template_file.getvalue())
-                        st.session_state.template_path = tmp_file.name
-                    file_status_message(template_file.name)
-            else:
-                st.session_state.use_custom_template = True
-                st.session_state.template_path = None
-                self._custom_template_builder()
+                with st.spinner("Analyzing XML..."):
+                    info = self._detect_xml_contents(tmp.name)
+                    st.session_state.xml_info = info
 
-            section_divider()
-            has_template = st.session_state.template_path or st.session_state.use_custom_template
-            template_status = "Custom" if st.session_state.use_custom_template else ("Ready" if st.session_state.template_path else "Waiting...")
+                    # Pre-parse video data for shotlist workflows
+                    if info['video_count'] > 0:
+                        parser = XMLParser()
+                        st.session_state.xml_video_data = parser.parse(tmp.name)
+                        st.session_state.xml_video_count = len(st.session_state.xml_video_data)
 
-            status_summary([
-                ("EDL File", "Ready" if st.session_state.edl_path else "Waiting..."),
-                ("Video File", "Ready" if st.session_state.video_path else "Waiting..."),
-                ("Template", template_status)
-            ])
+                st.rerun()
+        else:
+            # State 2: XML uploaded, show detection results
+            xml_detection_card(
+                filename=st.session_state.source_xml_name or '',
+                project_title=xml_info.get('project_title', ''),
+                video_count=xml_info.get('video_count', 0),
+                audio_count=xml_info.get('audio_count', 0),
+                fps=xml_info.get('fps'),
+            )
 
-            st.markdown("")
-            all_ready = all([
-                has_template,
-                st.session_state.edl_path,
-                st.session_state.video_path
-            ])
+            has_video = xml_info.get('video_count', 0) > 0
+            has_audio = xml_info.get('audio_count', 0) > 0
 
-            if all_ready:
-                if primary_button("Continue to Mapping", key="shotlist_continue_1"):
-                    if st.session_state.use_custom_template and st.session_state.custom_template_mappings:
-                        st.session_state.mappings = {
-                            k: f"{v}2" for k, v in st.session_state.custom_template_mappings.items() if v
-                        }
-                    st.session_state.shotlist_section = 2
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                if workflow_button(
+                    "Shotlist",
+                    "Generate shotlist with screenshots",
+                    key="btn_shotlist",
+                    enabled=has_video,
+                ):
+                    st.session_state.current_workflow = 'shotlist'
+                    st.session_state.shotlist_step = 1
                     st.rerun()
-            else:
-                st.info("Upload EDL and Video files, and set up a template to continue")
 
-    def _custom_template_builder(self):
-        """UI for building a custom template with column mappings."""
-        st.markdown("Define where each field should appear in your output Excel file.")
-        st.caption("Enter column letters (A, B, C, etc.) - data starts at row 2 with headers in row 1")
+            with col2:
+                if workflow_button(
+                    "Cue Sheet",
+                    "Generate music cue sheet",
+                    key="btn_cuesheet",
+                    enabled=has_audio,
+                ):
+                    st.session_state.current_workflow = 'cuesheet'
+                    st.session_state.cuesheet_step = 1
+                    st.rerun()
 
-        st.markdown("**Quick Presets**")
-        col1, col2, col3 = st.columns(3)
+            with col3:
+                if workflow_button(
+                    "Both",
+                    "Shotlist and cue sheet together",
+                    key="btn_both",
+                    enabled=has_video and has_audio,
+                ):
+                    st.session_state.current_workflow = 'both'
+                    st.session_state.shotlist_step = 1
+                    st.rerun()
+
+            divider()
+
+            if secondary_button("Upload Different File", key="landing_reset"):
+                self._reset_xml_state()
+                st.rerun()
+
+    def _reset_xml_state(self):
+        """Clear XML-related state to allow re-upload."""
+        st.session_state.source_xml_path = None
+        st.session_state.source_xml_name = None
+        st.session_state.xml_info = None
+        st.session_state.xml_video_data = None
+        st.session_state.xml_video_count = 0
+        st.session_state.shotlist_step = 1
+        st.session_state.shotlist_complete = False
+        st.session_state.shotlist_result_files = {}
+        st.session_state.music_complete = False
+        st.session_state.music_result_files = {}
+        st.session_state.cue_count = 0
+        st.session_state.cuesheet_step = 1
+        st.session_state.both_complete = False
+        st.session_state.both_result_files = {}
+
+    # ========== SHOTLIST WORKFLOW (6 steps) ==========
+
+    def render_shotlist(self):
+        """Render the current shotlist step."""
+        step = st.session_state.shotlist_step
+
+        step_indicator(step, 6, self.SHOTLIST_STEPS)
+
+        if step == 1:
+            self.shotlist_step_template()
+        elif step == 2:
+            self.shotlist_step_video()
+        elif step == 3:
+            self.shotlist_step_mapping()
+        elif step == 4:
+            self.shotlist_step_settings()
+        elif step == 5:
+            self.shotlist_step_generate()
+        elif step == 6:
+            self.shotlist_step_download()
+
+    def shotlist_step_template(self):
+        """Step 1: Template choice."""
+        page_title("Template Choice", "Choose how to set up your Excel output")
+
+        col1, col2 = st.columns(2)
 
         with col1:
-            if secondary_button("Standard Layout", key="preset_standard", full_width=True):
-                st.session_state.custom_template_mappings = {
-                    'clip_name': 'A', 'src_start': 'B', 'src_end': 'C',
-                    'rec_start': 'D', 'rec_end': 'E', 'duration': 'F', 'screenshot': 'G'
-                }
+            if st.button("Upload Template", key="tpl_upload", use_container_width=True,
+                        type="primary" if st.session_state.use_template else "secondary"):
+                st.session_state.use_template = True
+                st.session_state.mappings = {}
                 st.rerun()
+
+            st.caption("Use an existing Excel template with auto-detected columns.")
 
         with col2:
-            if secondary_button("Minimal", key="preset_minimal", full_width=True):
-                st.session_state.custom_template_mappings = {
-                    'clip_name': 'A', 'src_start': 'B', 'src_end': 'C', 'duration': 'D'
-                }
+            if st.button("Custom Layout", key="tpl_custom", use_container_width=True,
+                        type="primary" if not st.session_state.use_template else "secondary"):
+                st.session_state.use_template = False
+                st.session_state.template_path = None
+                st.session_state.template_data = None
                 st.rerun()
 
-        with col3:
-            if secondary_button("Screenshot First", key="preset_screenshot", full_width=True):
-                st.session_state.custom_template_mappings = {
-                    'screenshot': 'A', 'clip_name': 'B', 'src_start': 'C',
-                    'src_end': 'D', 'duration': 'E'
-                }
-                st.rerun()
+            st.caption("Choose which fields to include and arrange columns.")
 
-        section_divider()
-        st.markdown("**Column Assignments**")
+        divider()
 
-        row1_fields = ['clip_name', 'src_start', 'src_end', 'screenshot']
-        cols = st.columns(4)
-        for i, field in enumerate(row1_fields):
-            display_name, desc = self.FIELD_INFO[field]
-            with cols[i]:
-                current = st.session_state.custom_template_mappings.get(field, '')
-                col_letter = st.text_input(
-                    display_name,
-                    value=current,
-                    max_chars=2,
-                    key=f"custom_col_{field}",
-                    placeholder="A",
-                    help=desc
-                )
-                if col_letter.strip():
-                    st.session_state.custom_template_mappings[field] = col_letter.strip().upper()
-                elif field in st.session_state.custom_template_mappings:
-                    st.session_state.custom_template_mappings.pop(field, None)
+        if st.session_state.use_template:
+            section_header("Upload Excel Template")
 
-    def shotlist_section_2(self):
-        """Shotlist Section 2: Configure Mappings."""
-        with st.expander("2. Configure Mappings", expanded=(st.session_state.shotlist_section == 2)):
-            if st.session_state.shotlist_section < 2:
-                st.info("Complete Section 1 first")
-                return
+            template_file = st.file_uploader(
+                "Excel Template",
+                type=['xlsx', 'xls'],
+                key="template_upload",
+                help="Your existing shotlist Excel template",
+                label_visibility="collapsed"
+            )
 
-            if st.session_state.use_custom_template:
-                section_header("Custom Template Mappings")
-                st.success("Using custom template - column mappings are set from Section 1")
+            if template_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                    tmp.write(template_file.getvalue())
+                    st.session_state.template_path = tmp.name
+                    self._track_temp_file(tmp.name)
 
-                if st.session_state.mappings:
-                    mapping_display(st.session_state.mappings, self.FIELD_NAMES)
+                try:
+                    df = pd.read_excel(st.session_state.template_path, header=None, nrows=10)
+                    st.session_state.template_data = df
+                    file_status(template_file.name)
+                except Exception as e:
+                    st.error(f"Failed to read template: {e}")
 
-                    section_divider()
-                    if primary_button("Continue to Review", key="shotlist_continue_2"):
-                        st.session_state.shotlist_section = 3
-                        st.rerun()
-                return
+            can_continue = st.session_state.template_path is not None
+        else:
+            section_header("Select Fields")
+            st.caption("Choose which fields to include in your shotlist output")
 
-            if st.session_state.template_path:
-                section_header("Template Analysis")
+            updated_fields = field_checkboxes(
+                fields=self.FIELDS,
+                selected_fields=st.session_state.selected_fields,
+                required_fields=self.REQUIRED_FIELDS,
+            )
 
-                # Run auto-analysis if not done yet
-                if not st.session_state.mappings:
-                    with st.spinner("Analyzing template..."):
-                        try:
-                            mappings = self.analyzer.analyze_template(st.session_state.template_path)
-                            st.session_state.mappings = mappings
-                        except Exception as e:
-                            st.error(f"Analysis failed: {e}")
-                            return
+            if set(updated_fields) != set(st.session_state.selected_fields):
+                st.session_state.selected_fields = updated_fields
+                st.session_state.field_order = updated_fields
+                st.session_state.mappings = self._build_mappings_from_field_order(updated_fields)
 
-                # Show detected mappings summary
-                if st.session_state.mappings:
-                    st.markdown("**Auto-detected field mappings:**")
-                    mapping_data = []
-                    for field, cell_ref in st.session_state.mappings.items():
-                        mapping_data.append({
-                            "Field": self.FIELD_NAMES.get(field, field.replace('_', ' ').title()),
-                            "Cell": cell_ref,
-                            "Status": "Auto-detected"
-                        })
-
-                    df_mappings = pd.DataFrame(mapping_data)
-                    st.dataframe(df_mappings, use_container_width=True, hide_index=True)
-
-                    # Re-analyze button
-                    if secondary_button("Re-analyze Template", key="reanalyze_template"):
-                        st.session_state.mappings = {}
-                        st.rerun()
-
-                # Quick presets section
-                section_divider()
-                section_header("Quick Presets")
-                st.caption("Apply a preset configuration for common template formats")
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-                    if secondary_button("NGO Template", key="preset_ngo", full_width=True):
-                        st.session_state.mappings = {
-                            'clip_name': 'E15',
-                            'src_start': 'F15',
-                            'src_end': 'G15',
-                            'screenshot': 'I15',
-                            'duration': 'A8'
-                        }
-                        st.rerun()
-
-                with col2:
-                    if secondary_button("Standard Row 2", key="preset_row2", full_width=True):
-                        st.session_state.mappings = {
-                            'clip_name': 'A2',
-                            'src_start': 'B2',
-                            'src_end': 'C2',
-                            'duration': 'D2',
-                            'screenshot': 'E2'
-                        }
-                        st.rerun()
-
-                with col3:
-                    if secondary_button("Clear All", key="preset_clear", full_width=True):
-                        st.session_state.mappings = {}
-                        st.rerun()
-
-                # Manual adjustments section
-                section_divider()
-                section_header("Manual Adjustments")
-                st.caption("Review and correct any incorrectly detected mappings. Enter cell references like 'A2', 'E15', etc. Leave blank to remove a mapping.")
-
-                # Row 1: Primary fields
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    clip_name = st.text_input(
-                        "Clip Name Cell",
-                        value=st.session_state.mappings.get('clip_name', ''),
-                        key="manual_clip_name",
-                        placeholder="e.g. E15",
-                        help="Cell where clip/source filenames will be written"
-                    )
-                    src_start = st.text_input(
-                        "Time In Cell",
-                        value=st.session_state.mappings.get('src_start', ''),
-                        key="manual_src_start",
-                        placeholder="e.g. F15",
-                        help="Cell where source start timecodes will be written"
-                    )
-
-                with col2:
-                    src_end = st.text_input(
-                        "Time Out Cell",
-                        value=st.session_state.mappings.get('src_end', ''),
-                        key="manual_src_end",
-                        placeholder="e.g. G15",
-                        help="Cell where source end timecodes will be written"
-                    )
-                    screenshot = st.text_input(
-                        "Screenshot Cell",
-                        value=st.session_state.mappings.get('screenshot', ''),
-                        key="manual_screenshot",
-                        placeholder="e.g. I15",
-                        help="Cell where screenshot images will be inserted"
-                    )
-
-                with col3:
-                    duration = st.text_input(
-                        "Duration Cell",
-                        value=st.session_state.mappings.get('duration', ''),
-                        key="manual_duration",
-                        placeholder="e.g. H15",
-                        help="Cell where clip duration will be written"
-                    )
-                    rec_start = st.text_input(
-                        "Record Start Cell (Optional)",
-                        value=st.session_state.mappings.get('rec_start', ''),
-                        key="manual_rec_start",
-                        placeholder="e.g. J15",
-                        help="Cell where timeline/record start timecodes will be written"
-                    )
-
-                # Update mappings from manual inputs
-                self._update_mapping_from_input('clip_name', clip_name)
-                self._update_mapping_from_input('src_start', src_start)
-                self._update_mapping_from_input('src_end', src_end)
-                self._update_mapping_from_input('screenshot', screenshot)
-                self._update_mapping_from_input('duration', duration)
-                self._update_mapping_from_input('rec_start', rec_start)
-
-                # Current mappings summary
-                section_divider()
-                section_header("Current Mappings")
-
-                if st.session_state.mappings:
-                    final_mapping_data = []
-                    for field, cell_ref in sorted(st.session_state.mappings.items(), key=lambda x: x[1]):
-                        final_mapping_data.append({
-                            "Field": self.FIELD_NAMES.get(field, field.replace('_', ' ').title()),
-                            "Cell": cell_ref
-                        })
-                    st.dataframe(pd.DataFrame(final_mapping_data), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("No mappings configured. Use the fields above to set cell references.")
-
-                # Template Preview
-                section_divider()
-                section_header("Output Preview")
-                st.caption("Preview of how data will be placed in the Excel template")
-
-                if st.session_state.mappings:
-                    self._render_template_preview()
-                else:
-                    st.info("Configure mappings above to see a preview")
-
-                # Validation and continue
-                section_divider()
-                required_fields = ['clip_name', 'src_start', 'src_end', 'screenshot']
-                missing_fields = [f for f in required_fields if f not in st.session_state.mappings]
-
-                if missing_fields:
-                    missing_names = [self.FIELD_NAMES.get(f, f) for f in missing_fields]
-                    st.warning(f"Required mappings missing: {', '.join(missing_names)}")
-                else:
-                    st.success("All required mappings configured")
-                    if primary_button("Continue to Review", key="shotlist_continue_2b"):
-                        st.session_state.shotlist_section = 3
-                        st.rerun()
-
-    def _update_mapping_from_input(self, field: str, value: str):
-        """Update a mapping field from user input."""
-        value = value.strip().upper() if value else ''
-        if value:
-            st.session_state.mappings[field] = value
-        elif field in st.session_state.mappings:
-            st.session_state.mappings.pop(field, None)
-
-    def _render_template_preview(self):
-        """Render a visual preview of the Excel template layout."""
-        import re
-
-        mappings = st.session_state.mappings
-        if not mappings:
-            return
-
-        # Parse cell references to determine grid dimensions
-        def parse_cell_ref(cell_ref: str):
-            """Parse cell reference like 'E15' into (col_letter, row_num)."""
-            match = re.match(r'^([A-Z]+)(\d+)$', cell_ref.upper())
-            if match:
-                return match.group(1), int(match.group(2))
-            return None, None
-
-        def col_to_num(col_letter: str) -> int:
-            """Convert column letter to number (A=1, B=2, ..., Z=26, AA=27)."""
-            result = 0
-            for char in col_letter:
-                result = result * 26 + (ord(char) - ord('A') + 1)
-            return result
-
-        def num_to_col(num: int) -> str:
-            """Convert number to column letter."""
-            result = ""
-            while num > 0:
-                num, remainder = divmod(num - 1, 26)
-                result = chr(65 + remainder) + result
-            return result
-
-        # Find the range of cells we need to display
-        min_col, max_col = 100, 0
-        min_row, max_row = 1000, 0
-
-        cell_data = {}
-        for field, cell_ref in mappings.items():
-            col_letter, row_num = parse_cell_ref(cell_ref)
-            if col_letter and row_num:
-                col_num = col_to_num(col_letter)
-                min_col = min(min_col, col_num)
-                max_col = max(max_col, col_num)
-                min_row = min(min_row, row_num)
-                max_row = max(max_row, row_num)
-                cell_data[(col_num, row_num)] = field
-
-        if not cell_data:
-            st.info("No valid cell references to preview")
-            return
-
-        # Add some padding and show header row
-        header_row = min_row - 1 if min_row > 1 else min_row
-        display_rows = max(3, max_row - header_row + 2)  # Show at least 3 data rows
-
-        # Placeholder content for preview
-        placeholders = {
-            'clip_name': 'MyClip_001.mov',
-            'src_start': '01:00:15:12',
-            'src_end': '01:00:22:08',
-            'rec_start': '00:05:30:00',
-            'rec_end': '00:05:37:20',
-            'duration': '00:00:06:20',
-            'screenshot': '[Screenshot]'
-        }
-
-        field_short_names = {
-            'clip_name': 'Clip Name',
-            'src_start': 'Time In',
-            'src_end': 'Time Out',
-            'rec_start': 'Rec In',
-            'rec_end': 'Rec Out',
-            'duration': 'Duration',
-            'screenshot': 'Screenshot'
-        }
-
-        # Build preview data
-        preview_data = {}
-        columns = []
-
-        for col_num in range(min_col, max_col + 1):
-            col_letter = num_to_col(col_num)
-            columns.append(col_letter)
-            preview_data[col_letter] = []
-
-            for row_offset in range(display_rows):
-                row_num = header_row + row_offset
-                field = cell_data.get((col_num, row_num))
-
-                if field:
-                    if row_num == header_row:
-                        # This is a header row
-                        preview_data[col_letter].append(f"**{field_short_names.get(field, field)}**")
-                    else:
-                        # This is the first data row - show placeholder
-                        preview_data[col_letter].append(placeholders.get(field, '...'))
-                elif row_num == header_row and any(cell_data.get((col_num, r)) for r in range(min_row, max_row + 1)):
-                    # Header for a mapped column
-                    for r in range(min_row, max_row + 1):
-                        if (col_num, r) in cell_data:
-                            preview_data[col_letter].append(f"**{field_short_names.get(cell_data[(col_num, r)], '')}**")
-                            break
-                else:
-                    preview_data[col_letter].append('')
-
-        # Ensure all columns have same length
-        max_len = max(len(v) for v in preview_data.values()) if preview_data else 0
-        for col in preview_data:
-            while len(preview_data[col]) < max_len:
-                preview_data[col].append('')
-
-        # Create DataFrame for display
-        if preview_data and columns:
-            # Build row labels
-            row_labels = [f"Row {header_row + i}" for i in range(max_len)]
-
-            df_preview = pd.DataFrame(preview_data, index=row_labels)
-
-            st.markdown("**Excel Layout Preview** (showing first few rows):")
-            st.dataframe(df_preview, use_container_width=True)
-
-            # Legend
-            st.caption("Legend: Data will be written starting at the cell references you specified. Each subsequent EDL event fills the next row.")
-
-    def shotlist_section_3(self):
-        """Shotlist Section 3: Review and Adjust."""
-        with st.expander("3. Review and Adjust", expanded=(st.session_state.shotlist_section == 3)):
-            if st.session_state.shotlist_section < 3:
-                st.info("Complete Section 2 first")
-                return
-
-            if st.session_state.edl_path:
-                section_header("EDL Data Preview")
-
-                if st.session_state.edl_data is None:
-                    try:
-                        parser = EDLParser()
-                        edl_data = parser.parse(st.session_state.edl_path)
-                        st.session_state.edl_data = edl_data
-                    except Exception as e:
-                        st.error(f"Error parsing EDL: {e}")
-                        return
-
-                if st.session_state.edl_data:
-                    df = pd.DataFrame(st.session_state.edl_data)
-                    st.markdown(f"**{len(df)} events** (showing first 10)")
-                    st.dataframe(df.head(10), use_container_width=True, hide_index=True)
-
-                section_divider()
-                section_header("Screenshot Settings")
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.session_state.screenshot_width = st.number_input(
-                        "Width (px)", min_value=100, max_value=1920,
-                        value=st.session_state.screenshot_width, step=1
-                    )
-
-                with col2:
-                    st.session_state.screenshot_height = st.number_input(
-                        "Height (px)", min_value=100, max_value=1080,
-                        value=st.session_state.screenshot_height, step=1
-                    )
-
-                with col3:
-                    st.session_state.screenshot_quality = st.slider(
-                        "JPEG Quality", min_value=1, max_value=10,
-                        value=st.session_state.screenshot_quality
-                    )
-
-                st.session_state.disable_screenshots = st.checkbox(
-                    "Disable screenshot generation",
-                    value=st.session_state.disable_screenshots,
-                    key="disable_ss"
+            if not st.session_state.mappings and st.session_state.selected_fields:
+                st.session_state.field_order = list(st.session_state.selected_fields)
+                st.session_state.mappings = self._build_mappings_from_field_order(
+                    st.session_state.field_order
                 )
 
-                section_divider()
-                if primary_button("Continue to Generate", key="shotlist_continue_3"):
-                    st.session_state.shotlist_section = 4
-                    st.rerun()
+            can_continue = True
 
-    def shotlist_section_4(self):
-        """Shotlist Section 4: Generate."""
-        with st.expander("4. Generate Shotlist", expanded=(st.session_state.shotlist_section == 4)):
-            if st.session_state.shotlist_section < 4:
-                st.info("Complete Section 3 first")
-                return
+        # Navigation
+        divider()
+        back_clicked, next_clicked = nav_buttons(
+            back_enabled=True,
+            back_label="Home",
+            next_label="Next",
+            next_enabled=can_continue
+        )
 
-            if not st.session_state.shotlist_complete:
-                section_header("Processing Summary")
+        if back_clicked:
+            st.session_state.current_workflow = None
+            st.rerun()
 
-                event_count = st.session_state.edl_event_count or len(st.session_state.edl_data or [])
-                summary_data = {
-                    "Setting": ["EDL Events", "Mapped Fields", "Screenshots"],
-                    "Value": [
-                        str(event_count),
-                        str(len(st.session_state.mappings)),
-                        "Disabled" if st.session_state.disable_screenshots else "Enabled"
-                    ]
-                }
-                st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        if next_clicked:
+            if st.session_state.use_template and st.session_state.template_path and not st.session_state.mappings:
+                try:
+                    mappings = self.analyzer.analyze_template(st.session_state.template_path)
+                    st.session_state.mappings = mappings
+                    st.session_state.field_order = self._field_order_from_mappings(mappings)
+                    st.session_state.selected_fields = list(mappings.keys())
+                except Exception:
+                    pass
 
-                st.markdown("")
-                if primary_button("Generate Shotlist", key="generate_shotlist"):
-                    self._start_shotlist_processing()
+            st.session_state.shotlist_step = 2
+            st.rerun()
+
+    def shotlist_step_video(self):
+        """Step 2: Video upload (XML already loaded from landing page)."""
+        page_title("Upload Video", "Source video file for screenshot generation")
+
+        # Show XML info as read-only summary
+        xml_info = st.session_state.xml_info
+        if xml_info:
+            clip_count = st.session_state.xml_video_count
+            fps = xml_info.get('fps')
+            fps_str = f" at {fps} fps" if fps else ""
+            st.success(
+                f"XML loaded: {st.session_state.source_xml_name} "
+                f"({clip_count} clips{fps_str})"
+            )
+
+        divider()
+        section_header("Video File")
+
+        video_file = st.file_uploader(
+            "Video File",
+            type=["mp4", "mov", "mxf", "m4v"],
+            key="video_upload",
+            help="Source video for screenshots",
+            label_visibility="collapsed"
+        )
+
+        if video_file:
+            suffix = ''.join(Path(video_file.name).suffixes) or '.mp4'
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(video_file.getvalue())
+                st.session_state.video_path = tmp.name
+                self._track_temp_file(tmp.name)
+
+            st.session_state.output_dir = str(Path(st.session_state.video_path).parent)
+
+            try:
+                analyzer = VideoAnalyzer()
+                fps = analyzer.get_video_frame_rate(st.session_state.video_path)
+                st.session_state.video_fps = fps
+                file_status(video_file.name, f"{fps} fps")
+            except Exception:
+                file_status(video_file.name)
+
+        # Status summary
+        divider()
+        status_row([
+            ("XML", st.session_state.source_xml_path is not None,
+             f"{st.session_state.xml_video_count} clips" if st.session_state.source_xml_path else None),
+            ("Video", st.session_state.video_path is not None,
+             f"{st.session_state.video_fps} fps" if st.session_state.video_fps else None),
+        ])
+
+        can_continue = st.session_state.video_path is not None
+
+        divider()
+        back_clicked, next_clicked = nav_buttons(
+            back_enabled=True,
+            next_label="Next",
+            next_enabled=can_continue
+        )
+
+        if back_clicked:
+            st.session_state.shotlist_step = 1
+            st.rerun()
+
+        if next_clicked:
+            st.session_state.shotlist_step = 3
+            st.rerun()
+
+    def shotlist_step_mapping(self):
+        """Step 3: Interactive Excel preview with column selection."""
+        page_title("Excel Preview & Mapping",
+                   "Select a column below to assign or swap fields")
+
+        if not st.session_state.field_order and st.session_state.mappings:
+            st.session_state.field_order = self._field_order_from_mappings(st.session_state.mappings)
+        if not st.session_state.mappings and st.session_state.field_order:
+            st.session_state.mappings = self._build_mappings_from_field_order(st.session_state.field_order)
+
+        selected_col = st.session_state.mapping_selected_col
+        swap_mode = st.session_state.mapping_swap_mode
+
+        if swap_mode:
+            st.info(f"Swap mode: select another column to swap with column {_num_to_col(selected_col + 1)}.")
+        elif selected_col is not None:
+            st.caption(f"Column {_num_to_col(selected_col + 1)} selected. Use the panel below to assign a field or swap.")
+        else:
+            st.caption("Row 1 = column headers. Row 2 = sample data. Select a column below to assign fields.")
+
+        new_col = render_interactive_grid(
+            field_order=st.session_state.field_order,
+            fields=self.FIELDS,
+            selected_column=selected_col,
+        )
+
+        if new_col != selected_col:
+            if swap_mode and new_col is not None:
+                self._swap_columns(selected_col, new_col)
+                st.session_state.mapping_selected_col = None
             else:
-                st.success("Shotlist generation complete!")
+                st.session_state.mapping_selected_col = new_col
+            st.session_state.mapping_swap_mode = False
+            st.rerun()
 
-                if 'excel' in st.session_state.shotlist_result_files:
-                    excel_path = st.session_state.shotlist_result_files['excel']
-                    if os.path.exists(excel_path):
-                        section_header("Download")
-                        st.markdown(f"**File:** `{Path(excel_path).name}`")
+        if selected_col is not None and not swap_mode:
+            divider()
+            section_header(f"Assign Field to Column {_num_to_col(selected_col + 1)}")
 
-                        with open(excel_path, 'rb') as f:
-                            st.download_button(
-                                label="Download Excel Shotlist",
-                                data=f.read(),
-                                file_name=Path(excel_path).name,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
+            action = field_assignment_panel(
+                selected_col=selected_col,
+                field_order=st.session_state.field_order,
+                all_fields=self.FIELDS,
+            )
 
-    def _start_shotlist_processing(self):
+            if action == "clear":
+                self._clear_column(selected_col)
+                st.session_state.mapping_selected_col = None
+                st.rerun()
+            elif action == "swap":
+                st.session_state.mapping_swap_mode = True
+                st.rerun()
+            elif action is not None:
+                self._assign_field_to_column(action, selected_col)
+                st.session_state.mapping_selected_col = None
+                st.rerun()
+
+        missing = [f for f in self.REQUIRED_FIELDS if f not in st.session_state.mappings]
+        if missing:
+            missing_names = [self.FIELD_NAMES[f] for f in missing]
+            st.warning(f"Required: {', '.join(missing_names)}")
+            can_continue = False
+        else:
+            can_continue = True
+
+        divider()
+        back_clicked, next_clicked = nav_buttons(
+            back_enabled=True,
+            next_label="Next",
+            next_enabled=can_continue
+        )
+
+        if back_clicked:
+            st.session_state.mapping_selected_col = None
+            st.session_state.mapping_swap_mode = False
+            st.session_state.shotlist_step = 2
+            st.rerun()
+
+        if next_clicked:
+            st.session_state.mapping_selected_col = None
+            st.session_state.mapping_swap_mode = False
+            st.session_state.shotlist_step = 4
+            st.rerun()
+
+    def _swap_columns(self, col_a: int, col_b: int):
+        """Swap two columns in field_order and rebuild mappings."""
+        field_order = list(st.session_state.field_order)
+        max_idx = max(col_a, col_b)
+
+        while len(field_order) <= max_idx:
+            field_order.append(None)
+
+        field_order[col_a], field_order[col_b] = field_order[col_b], field_order[col_a]
+
+        while field_order and field_order[-1] is None:
+            field_order.pop()
+
+        clean_order = [f for f in field_order if f is not None]
+        st.session_state.field_order = clean_order
+        st.session_state.mappings = self._build_mappings_from_field_order(clean_order)
+
+    def _clear_column(self, col_idx: int):
+        """Remove a field from the given column position."""
+        field_order = list(st.session_state.field_order)
+        if col_idx < len(field_order):
+            field_order.pop(col_idx)
+            st.session_state.field_order = field_order
+            st.session_state.mappings = self._build_mappings_from_field_order(field_order)
+
+    def _assign_field_to_column(self, field_key: str, col_idx: int):
+        """Assign a field to a specific column position."""
+        field_order = list(st.session_state.field_order)
+
+        if field_key in field_order:
+            field_order.remove(field_key)
+
+        if col_idx >= len(field_order):
+            field_order.append(field_key)
+        else:
+            field_order[col_idx] = field_key
+
+        st.session_state.field_order = field_order
+        st.session_state.mappings = self._build_mappings_from_field_order(field_order)
+
+    def shotlist_step_settings(self):
+        """Step 4: Screenshot settings."""
+        page_title("Screenshot Settings", "Configure screenshot dimensions and quality")
+
+        section_header("Dimensions")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.session_state.screenshot_width = st.number_input(
+                "Width (px)",
+                min_value=100,
+                max_value=1920,
+                value=st.session_state.screenshot_width,
+                step=1,
+                key="ss_width"
+            )
+
+        with col2:
+            st.session_state.screenshot_height = st.number_input(
+                "Height (px)",
+                min_value=100,
+                max_value=1080,
+                value=st.session_state.screenshot_height,
+                step=1,
+                key="ss_height"
+            )
+
+        divider()
+        section_header("Quality")
+
+        st.session_state.screenshot_quality = st.slider(
+            "JPEG Quality",
+            min_value=1,
+            max_value=10,
+            value=st.session_state.screenshot_quality,
+            key="ss_quality"
+        )
+
+        divider()
+        section_header("Options")
+
+        st.session_state.disable_screenshots = st.checkbox(
+            "Disable screenshot generation",
+            value=st.session_state.disable_screenshots,
+            key="disable_ss",
+            help="Generate shotlist without screenshots"
+        )
+
+        if not st.session_state.disable_screenshots:
+            st.info(f"Screenshots will be {st.session_state.screenshot_width}x{st.session_state.screenshot_height}px")
+
+        divider()
+        back_clicked, next_clicked = nav_buttons(
+            back_enabled=True,
+            next_label="Generate",
+            next_enabled=True
+        )
+
+        if back_clicked:
+            st.session_state.shotlist_step = 3
+            st.rerun()
+
+        if next_clicked:
+            st.session_state.shotlist_step = 5
+            st.rerun()
+
+    def shotlist_step_generate(self):
+        """Step 5: Generate shotlist."""
+        page_title("Generate Shotlist", "Processing your files")
+
+        if st.session_state.shotlist_complete:
+            st.session_state.shotlist_step = 6
+            st.rerun()
+            return
+
+        section_header("Processing Summary")
+
+        event_count = st.session_state.xml_video_count or len(st.session_state.xml_video_data or [])
+
+        summary_data = pd.DataFrame({
+            "Setting": ["Video Clips", "Mapped Fields", "Screenshots", "Dimensions"],
+            "Value": [
+                str(event_count),
+                str(len(st.session_state.mappings)),
+                "Disabled" if st.session_state.disable_screenshots else "Enabled",
+                f"{st.session_state.screenshot_width}x{st.session_state.screenshot_height}px"
+            ]
+        })
+        data_table(summary_data)
+
+        divider()
+
+        if primary_button("Start Processing", key="start_generate"):
+            self._run_shotlist_processing()
+
+        divider()
+        if secondary_button("Back", key="gen_back"):
+            st.session_state.shotlist_step = 4
+            st.rerun()
+
+    def _run_shotlist_processing(self):
         """Execute shotlist generation."""
         if not st.session_state.output_dir and st.session_state.video_path:
             st.session_state.output_dir = str(Path(st.session_state.video_path).parent)
@@ -751,24 +779,29 @@ class DocShipper:
             if st.session_state.disable_screenshots and 'screenshot' in mappings:
                 mappings.pop('screenshot', None)
 
-            template_path = None if st.session_state.use_custom_template else st.session_state.template_path
+            template_path = st.session_state.template_path if st.session_state.use_template else None
 
             results = self.video_processor.process(
-                edl_path=st.session_state.edl_path,
+                edl_path=st.session_state.source_xml_path,
                 video_path=st.session_state.video_path,
                 template_path=template_path,
                 mappings=mappings,
                 output_dir=st.session_state.output_dir,
                 progress_callback=update_progress,
-                edl_data_override=st.session_state.edl_data,
+                edl_data_override=st.session_state.xml_video_data,
                 disable_screenshots=st.session_state.disable_screenshots,
-                show_name=st.session_state.guessed_show_name
+                screenshot_width=st.session_state.screenshot_width,
+                screenshot_height=st.session_state.screenshot_height,
+                screenshot_quality=st.session_state.screenshot_quality,
             )
 
             if results['status'] == 'success':
                 st.session_state.shotlist_result_files = results['files']
                 st.session_state.shotlist_complete = True
-                st.rerun()
+                # Only auto-advance for shotlist-only mode
+                if st.session_state.current_workflow == 'shotlist':
+                    st.session_state.shotlist_step = 6
+                    st.rerun()
             else:
                 st.error(f"Processing failed: {results['message']}")
 
@@ -776,139 +809,114 @@ class DocShipper:
             st.error(f"Processing failed: {str(e)}")
             logger.error(f"Processing error: {e}")
 
-    # ========== MUSIC CUE WORKFLOW ==========
+    def shotlist_step_download(self):
+        """Step 6: Download results."""
+        page_title("Download", "Your shotlist is ready")
 
-    def music_cue_workflow(self):
-        """Complete music cue sheet workflow."""
-        st.markdown("**Generate music cue sheets from Premiere Pro XML exports**")
+        if not st.session_state.shotlist_complete:
+            st.warning("Processing not complete")
+            if secondary_button("Back to Generate", key="dl_back_gen"):
+                st.session_state.shotlist_step = 5
+                st.rerun()
+            return
 
-        # Section 1: Setup Files
-        self.music_section_1()
+        st.success("Shotlist generation complete")
 
-        # Section 2: Configure Options
-        self.music_section_2()
+        divider()
 
-        # Section 3: Generate
-        self.music_section_3()
+        if 'excel' in st.session_state.shotlist_result_files:
+            excel_path = st.session_state.shotlist_result_files['excel']
+            if os.path.exists(excel_path):
+                section_header("Download File")
+                st.markdown(f"**File:** `{Path(excel_path).name}`")
 
-    def music_section_1(self):
-        """Music Cue Section 1: Setup Files."""
-        with st.expander("1. Setup Files", expanded=(st.session_state.music_section == 1)):
-            section_header("Input Files")
+                with open(excel_path, 'rb') as f:
+                    st.download_button(
+                        label="Download Excel Shotlist",
+                        data=f.read(),
+                        file_name=Path(excel_path).name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
 
-            col1, col2 = st.columns(2)
+        divider()
 
-            with col1:
-                st.markdown("**Premiere XML File**")
-                xml_file = st.file_uploader(
-                    "Premiere XML",
-                    type=['xml'],
-                    key="xml_upload",
-                    help="XML export from Adobe Premiere Pro"
-                )
+        col1, col2 = st.columns(2)
 
-                if xml_file:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.xml') as tmp_file:
-                        tmp_file.write(xml_file.getvalue())
-                        st.session_state.xml_path = tmp_file.name
-                    file_status_message(xml_file.name)
-
-            with col2:
-                st.markdown("**Excel Template (Optional)**")
-                cue_template = st.file_uploader(
-                    "Cue Sheet Template",
-                    type=['xlsx', 'xls'],
-                    key="cue_template_upload",
-                    help="Optional: Your cue sheet template"
-                )
-
-                if cue_template:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                        tmp_file.write(cue_template.getvalue())
-                        st.session_state.cue_template_path = tmp_file.name
-                    file_status_message(cue_template.name)
-
-            section_divider()
-            status_summary([
-                ("XML File", "Ready" if st.session_state.xml_path else "Waiting..."),
-                ("Template", "Ready" if st.session_state.cue_template_path else "Optional")
-            ])
-
-            st.markdown("")
-            if st.session_state.xml_path:
-                if primary_button("Continue to Configure", key="music_continue_1"):
-                    st.session_state.music_section = 2
-                    st.rerun()
-            else:
-                st.info("Upload a Premiere XML file to continue")
-
-    def music_section_2(self):
-        """Music Cue Section 2: Configure Options."""
-        with st.expander("2. Configure Options", expanded=(st.session_state.music_section == 2)):
-            if st.session_state.music_section < 2:
-                st.info("Complete Section 1 first")
-                return
-
-            section_header("Filtering Options")
-
-            st.session_state.filter_keyword = st.text_input(
-                "Filter Keyword",
-                value=st.session_state.filter_keyword,
-                help="Only include audio files containing this keyword (e.g., 'alibi' for Alibi Music library)"
-            )
-
-            st.caption("Leave empty to include all audio files from the XML")
-
-            section_divider()
-            if primary_button("Continue to Generate", key="music_continue_2"):
-                st.session_state.music_section = 3
+        with col1:
+            if secondary_button("Start Over", key="dl_restart", full_width=True):
+                self._reset_shotlist_state()
                 st.rerun()
 
-    def music_section_3(self):
-        """Music Cue Section 3: Generate."""
-        with st.expander("3. Generate Cue Sheet", expanded=(st.session_state.music_section == 3)):
-            if st.session_state.music_section < 3:
-                st.info("Complete Section 2 first")
-                return
+        with col2:
+            if secondary_button("Home", key="dl_home", full_width=True):
+                st.session_state.current_workflow = None
+                st.rerun()
 
-            if not st.session_state.music_complete:
-                section_header("Processing Summary")
+    def _reset_shotlist_state(self):
+        """Reset shotlist workflow state."""
+        st.session_state.shotlist_step = 1
+        st.session_state.shotlist_complete = False
+        st.session_state.shotlist_result_files = {}
+        st.session_state.video_path = None
+        st.session_state.video_fps = None
+        st.session_state.mappings = {}
+        st.session_state.template_path = None
+        st.session_state.template_data = None
 
-                summary_data = {
-                    "Setting": ["XML File", "Template", "Filter Keyword"],
-                    "Value": [
-                        "Ready",
-                        "Provided" if st.session_state.cue_template_path else "Basic template",
-                        st.session_state.filter_keyword or "None (all files)"
-                    ]
-                }
-                st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    # ========== CUE SHEET WORKFLOW (2 steps) ==========
 
-                st.markdown("")
-                if primary_button("Generate Cue Sheet", key="generate_cue_sheet"):
-                    self._start_music_processing()
-            else:
-                st.success(f"Cue sheet generation complete! ({st.session_state.cue_count} cues)")
+    def render_cuesheet(self):
+        """Render the current cue sheet step."""
+        step = st.session_state.cuesheet_step
 
-                if 'excel' in st.session_state.music_result_files:
-                    excel_path = st.session_state.music_result_files['excel']
-                    if os.path.exists(excel_path):
-                        section_header("Download")
-                        st.markdown(f"**File:** `{Path(excel_path).name}`")
+        step_indicator(step, 2, self.CUESHEET_STEPS)
 
-                        with open(excel_path, 'rb') as f:
-                            st.download_button(
-                                label="Download Cue Sheet",
-                                data=f.read(),
-                                file_name=Path(excel_path).name,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
+        if step == 1:
+            self.cuesheet_step_generate()
+        elif step == 2:
+            self.cuesheet_step_download()
 
-    def _start_music_processing(self):
-        """Execute music cue sheet generation."""
+    def cuesheet_step_generate(self):
+        """Step 1: Generate cue sheet (summary + start button)."""
+        page_title("Generate Cue Sheet", "Processing audio files from your XML")
+
+        if st.session_state.music_complete:
+            st.session_state.cuesheet_step = 2
+            st.rerun()
+            return
+
+        section_header("Processing Summary")
+
+        xml_info = st.session_state.xml_info or {}
+        summary_data = pd.DataFrame({
+            "Setting": ["XML File", "Audio Files", "Project"],
+            "Value": [
+                st.session_state.source_xml_name or "Ready",
+                str(xml_info.get('audio_count', 0)),
+                xml_info.get('project_title', 'Unknown'),
+            ]
+        })
+        data_table(summary_data)
+
+        st.caption(
+            "All audio files will be included. Files without metadata "
+            "will be sorted to the bottom for easy removal in Excel."
+        )
+
+        divider()
+
+        if primary_button("Start Processing", key="cue_start"):
+            self._run_cuesheet_processing()
+
+        divider()
+        if secondary_button("Back", key="cue_back"):
+            st.session_state.current_workflow = None
+            st.rerun()
+
+    def _run_cuesheet_processing(self):
+        """Execute cue sheet generation."""
         output_dir = tempfile.mkdtemp()
-        st.session_state.cue_output_dir = output_dir
 
         progress_widget = st.progress(0)
         status_text = st.empty()
@@ -919,18 +927,19 @@ class DocShipper:
                 status_text.text(message)
 
             results = self.music_processor.process(
-                xml_path=st.session_state.xml_path,
-                template_path=st.session_state.cue_template_path,
+                xml_path=st.session_state.source_xml_path,
+                template_path=None,
                 output_dir=output_dir,
-                filter_keyword=st.session_state.filter_keyword or "",
-                progress_callback=update_progress
+                progress_callback=update_progress,
             )
 
             if results['status'] == 'success':
                 st.session_state.music_result_files = results['files']
                 st.session_state.cue_count = results['cue_count']
                 st.session_state.music_complete = True
-                st.rerun()
+                if st.session_state.current_workflow == 'cuesheet':
+                    st.session_state.cuesheet_step = 2
+                    st.rerun()
             elif results['status'] == 'warning':
                 st.warning(results['message'])
             else:
@@ -940,9 +949,264 @@ class DocShipper:
             st.error(f"Processing failed: {str(e)}")
             logger.error(f"Music processing error: {e}")
 
+    def cuesheet_step_download(self):
+        """Step 2: Download results."""
+        page_title("Download", "Your cue sheet is ready")
+
+        if not st.session_state.music_complete:
+            st.warning("Processing not complete")
+            if secondary_button("Back to Generate", key="cue_dl_back"):
+                st.session_state.cuesheet_step = 1
+                st.rerun()
+            return
+
+        st.success(f"Cue sheet complete ({st.session_state.cue_count} cues)")
+
+        divider()
+
+        if 'excel' in st.session_state.music_result_files:
+            excel_path = st.session_state.music_result_files['excel']
+            if os.path.exists(excel_path):
+                section_header("Download File")
+                st.markdown(f"**File:** `{Path(excel_path).name}`")
+
+                with open(excel_path, 'rb') as f:
+                    st.download_button(
+                        label="Download Cue Sheet",
+                        data=f.read(),
+                        file_name=Path(excel_path).name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
+        divider()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if secondary_button("Start Over", key="cue_restart", full_width=True):
+                st.session_state.cuesheet_step = 1
+                st.session_state.music_complete = False
+                st.session_state.music_result_files = {}
+                st.session_state.current_workflow = None
+                self._reset_xml_state()
+                st.rerun()
+
+        with col2:
+            if secondary_button("Home", key="cue_home", full_width=True):
+                st.session_state.current_workflow = None
+                st.rerun()
+
+    # ========== BOTH WORKFLOW (6 steps) ==========
+
+    def render_both(self):
+        """Render the combined shotlist + cue sheet workflow."""
+        step = st.session_state.shotlist_step
+
+        step_indicator(step, 6, self.SHOTLIST_STEPS)
+
+        # Steps 1-4 reuse shotlist methods
+        if step == 1:
+            self.shotlist_step_template()
+        elif step == 2:
+            self.shotlist_step_video()
+        elif step == 3:
+            self.shotlist_step_mapping()
+        elif step == 4:
+            self.shotlist_step_settings()
+        elif step == 5:
+            self.both_step_generate()
+        elif step == 6:
+            self.both_step_download()
+
+    def both_step_generate(self):
+        """Step 5: Generate both shotlist and cue sheet."""
+        page_title("Generate Both", "Processing shotlist and cue sheet")
+
+        if st.session_state.both_complete:
+            st.session_state.shotlist_step = 6
+            st.rerun()
+            return
+
+        section_header("Processing Summary")
+
+        event_count = st.session_state.xml_video_count or len(st.session_state.xml_video_data or [])
+        xml_info = st.session_state.xml_info or {}
+
+        summary_data = pd.DataFrame({
+            "Setting": ["Video Clips", "Audio Files", "Mapped Fields", "Screenshots"],
+            "Value": [
+                str(event_count),
+                str(xml_info.get('audio_count', 0)),
+                str(len(st.session_state.mappings)),
+                "Disabled" if st.session_state.disable_screenshots else "Enabled",
+            ]
+        })
+        data_table(summary_data)
+
+        divider()
+
+        if primary_button("Start Processing", key="both_start"):
+            self._run_both_processing()
+
+        divider()
+        if secondary_button("Back", key="both_back"):
+            st.session_state.shotlist_step = 4
+            st.rerun()
+
+    def _run_both_processing(self):
+        """Execute combined shotlist + cue sheet generation."""
+        if not st.session_state.output_dir and st.session_state.video_path:
+            st.session_state.output_dir = str(Path(st.session_state.video_path).parent)
+
+        progress_widget = st.progress(0)
+        status_text = st.empty()
+
+        try:
+            # -- Phase 1: Shotlist (0% - 70%) --
+            def shotlist_progress(progress: float, message: str):
+                scaled = progress * 0.7
+                progress_widget.progress(scaled)
+                status_text.text(f"[Shotlist] {message}")
+
+            mappings = dict(st.session_state.mappings)
+            if st.session_state.disable_screenshots and 'screenshot' in mappings:
+                mappings.pop('screenshot', None)
+
+            template_path = st.session_state.template_path if st.session_state.use_template else None
+
+            shotlist_results = self.video_processor.process(
+                edl_path=st.session_state.source_xml_path,
+                video_path=st.session_state.video_path,
+                template_path=template_path,
+                mappings=mappings,
+                output_dir=st.session_state.output_dir,
+                progress_callback=shotlist_progress,
+                edl_data_override=st.session_state.xml_video_data,
+                disable_screenshots=st.session_state.disable_screenshots,
+                screenshot_width=st.session_state.screenshot_width,
+                screenshot_height=st.session_state.screenshot_height,
+                screenshot_quality=st.session_state.screenshot_quality,
+            )
+
+            if shotlist_results['status'] != 'success':
+                st.error(f"Shotlist failed: {shotlist_results['message']}")
+                return
+
+            st.session_state.shotlist_result_files = shotlist_results['files']
+            st.session_state.shotlist_complete = True
+
+            # -- Phase 2: Cue Sheet (70% - 100%) --
+            def cuesheet_progress(progress: float, message: str):
+                scaled = 0.7 + (progress * 0.3)
+                progress_widget.progress(scaled)
+                status_text.text(f"[Cue Sheet] {message}")
+
+            cue_output_dir = tempfile.mkdtemp()
+            cue_results = self.music_processor.process(
+                xml_path=st.session_state.source_xml_path,
+                template_path=None,
+                output_dir=cue_output_dir,
+                progress_callback=cuesheet_progress,
+            )
+
+            if cue_results['status'] != 'success':
+                st.warning(f"Cue sheet: {cue_results['message']}")
+            else:
+                st.session_state.music_result_files = cue_results['files']
+                st.session_state.cue_count = cue_results['cue_count']
+                st.session_state.music_complete = True
+
+            # Merge results
+            both_files = {}
+            both_files.update(shotlist_results.get('files', {}))
+            if cue_results.get('files', {}).get('excel'):
+                both_files['cue_excel'] = cue_results['files']['excel']
+            st.session_state.both_result_files = both_files
+            st.session_state.both_complete = True
+
+            progress_widget.progress(1.0)
+            status_text.text("Processing complete!")
+
+            st.session_state.shotlist_step = 6
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Processing failed: {str(e)}")
+            logger.error(f"Both processing error: {e}")
+
+    def both_step_download(self):
+        """Step 6: Download both results."""
+        page_title("Download", "Your files are ready")
+
+        if not st.session_state.both_complete:
+            st.warning("Processing not complete")
+            if secondary_button("Back to Generate", key="both_dl_back"):
+                st.session_state.shotlist_step = 5
+                st.rerun()
+            return
+
+        st.success("Generation complete")
+
+        divider()
+
+        # Shotlist download
+        if 'excel' in st.session_state.shotlist_result_files:
+            excel_path = st.session_state.shotlist_result_files['excel']
+            if os.path.exists(excel_path):
+                section_header("Shotlist")
+                st.markdown(f"**File:** `{Path(excel_path).name}`")
+                with open(excel_path, 'rb') as f:
+                    st.download_button(
+                        label="Download Shotlist Excel",
+                        data=f.read(),
+                        file_name=Path(excel_path).name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="dl_shotlist",
+                    )
+
+        # Cue sheet download
+        if 'cue_excel' in st.session_state.both_result_files:
+            cue_path = st.session_state.both_result_files['cue_excel']
+            if os.path.exists(cue_path):
+                divider()
+                section_header("Cue Sheet")
+                st.markdown(f"**File:** `{Path(cue_path).name}`")
+                with open(cue_path, 'rb') as f:
+                    st.download_button(
+                        label="Download Cue Sheet Excel",
+                        data=f.read(),
+                        file_name=Path(cue_path).name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="dl_cuesheet",
+                    )
+
+        divider()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if secondary_button("Start Over", key="both_restart", full_width=True):
+                self._reset_shotlist_state()
+                st.session_state.both_complete = False
+                st.session_state.both_result_files = {}
+                st.session_state.music_complete = False
+                st.session_state.music_result_files = {}
+                st.session_state.current_workflow = None
+                self._reset_xml_state()
+                st.rerun()
+
+        with col2:
+            if secondary_button("Home", key="both_home", full_width=True):
+                st.session_state.current_workflow = None
+                st.rerun()
+
 
 def main():
     """Main entry point."""
+    atexit.register(_cleanup_temp_files)
     app = DocShipper()
     app.run()
 

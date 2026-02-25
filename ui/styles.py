@@ -1,650 +1,772 @@
 """
 CSS Styles for DocShipper
-hybrid.css theme - CS16 beveled 3D + Classic Mac monochrome
+Black/White minimal aesthetic with sharp corners and no shadows
 """
 
 import streamlit as st
-from ui.tokens import (
-    COLORS, FONTS, FONT_SIZES, FONT_WEIGHTS, SPACING, BORDERS, SHADOWS,
-    TRANSITIONS, LETTER_SPACING, BLACK, WHITE, LIGHT_GREY, DARK_GREY,
-    ACCENT, ACCENT_LIGHT, ACCENT_DARK,
-    COLOR_OK, COLOR_OK_LIGHT, COLOR_OK_DARK,
-    COLOR_SUCCESS, COLOR_SUCCESS_LIGHT, COLOR_SUCCESS_DARK,
-    COLOR_DANGER, COLOR_DANGER_LIGHT, COLOR_DANGER_DARK,
-    ARIAL_PIXEL_BASE64,
-)
+import streamlit.components.v1 as components
+from ui.tokens import COLORS, FONTS, FONT_SIZES, FONT_WEIGHTS, SPACING, BORDERS, SHADOWS, TRANSITIONS, LETTER_SPACING, GRID
 
 
 def get_global_css() -> str:
-    """Return complete CSS stylesheet using hybrid.css design system."""
+    """Return complete CSS stylesheet using design tokens."""
     return f"""
     <style>
-    /* ============================================
-       FONT - ArialPixel embedded
-       ============================================ */
-    @font-face {{
-        font-family: 'ArialPixel';
-        src: url('data:font/truetype;base64,{ARIAL_PIXEL_BASE64}') format('truetype');
-        font-weight: normal;
-        font-style: normal;
-    }}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    /* ============================================
-       BASE STYLING - hybrid.css theme
-       ============================================ */
-
+    /* Base styling */
     * {{
-        box-sizing: border-box;
+        font-family: {FONTS['primary']};
     }}
 
-    /* Force ArialPixel font on text elements, but NOT on icon elements */
-    body, .stApp, .main,
-    p, label, button, input, select, textarea,
-    h1, h2, h3, h4, h5, h6,
-    .stMarkdown, .stMarkdown p, .stMarkdown span,
-    [data-testid="stMarkdownContainer"],
-    .main-header, .main-subtitle, .section-title {{
-        font-family: {FONTS['primary']} !important;
-    }}
-
-    /* CRITICAL: Exclude Material Icons - they use icon font ligatures */
-    [data-testid="stIconMaterial"],
-    [data-testid="stIcon"],
-    .material-icons,
-    [translate="no"],
-    span[class*="icon"],
-    svg {{
-        font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
-    }}
-
-    /* Expander title text only (not the icon) */
-    [data-testid="stMarkdownContainer"],
-    [data-testid="stExpander"] [data-testid="stMarkdownContainer"],
-    details summary [data-testid="stMarkdownContainer"] {{
-        font-family: {FONTS['primary']} !important;
-    }}
-
-    /* Speckled grid background */
     .stApp {{
-        background: linear-gradient(90deg, {WHITE} 21px, transparent 1%) center,
-                    linear-gradient({WHITE} 21px, transparent 1%) center,
-                    {BLACK} !important;
-        background-size: 22px 22px !important;
-        background-attachment: fixed !important;
-    }}
-
-    .main .block-container {{
-        background-color: {WHITE};
-        border: 2px solid {BLACK};
-        padding: {SPACING['lg']} !important;
-        max-width: 900px;
+        background-color: {COLORS['background']};
     }}
 
     body, .stApp, .main {{
         color: {COLORS['text']};
     }}
 
-    /* Global link styling - monochrome */
-    a, a:visited, a:hover, a:active {{
-        color: {BLACK} !important;
+    /* Hide Streamlit branding */
+    #MainMenu {{visibility: hidden;}}
+    footer {{visibility: hidden;}}
+    header {{visibility: hidden;}}
+
+    /* Main container max-width */
+    .main .block-container {{
+        max-width: 900px;
+        padding-top: {SPACING['xl']};
+        padding-bottom: {SPACING['xl']};
     }}
 
-    /* Override any blue/accent colors globally */
-    .stApp *[style*="color: rgb(0,"] {{
-        color: {BLACK} !important;
-    }}
-
-    /* ============================================
-       HEADER
-       ============================================ */
-
-    .main-header {{
-        font-size: {FONT_SIZES['2xl']};
-        color: {BLACK} !important;
-        text-align: center;
-        margin: {SPACING['lg']} 0 {SPACING['sm']} 0;
+    /* Landing page header */
+    .landing-header {{
+        font-size: {FONT_SIZES['3xl']};
         font-weight: {FONT_WEIGHTS['bold']};
-        letter-spacing: {LETTER_SPACING['normal']};
-        line-height: 1.2;
-    }}
-
-    .main-subtitle {{
+        color: {COLORS['text']};
         text-align: center;
-        color: {DARK_GREY} !important;
-        font-size: {FONT_SIZES['sm']};
-        letter-spacing: {LETTER_SPACING['tight']};
-        line-height: 1.5;
-        margin-bottom: {SPACING['xl']};
+        margin-bottom: {SPACING['sm']};
+        letter-spacing: -1px;
     }}
 
-    /* ============================================
-       PROGRESS BAR - Segmented fill
-       ============================================ */
+    .landing-subtitle {{
+        font-size: {FONT_SIZES['base']};
+        color: {COLORS['text_muted']};
+        text-align: center;
+        margin-bottom: {SPACING['3xl']};
+    }}
 
-    .progress-container {{
+    /* Workflow buttons (landing page) */
+    .workflow-btn {{
+        display: block;
         width: 100%;
-        height: 24px;
-        background-color: {COLORS['secondary_bg']};
-        border: 1px solid {BLACK};
-        box-shadow: {SHADOWS['inset']};
+        padding: {SPACING['2xl']} {SPACING['xl']};
+        background-color: {COLORS['surface']};
+        border: {BORDERS['width']} solid {COLORS['border']};
+        border-radius: {BORDERS['radius']};
+        cursor: pointer;
+        text-align: left;
+        transition: background-color {TRANSITIONS['fast']};
+        margin-bottom: {SPACING['md']};
+    }}
+
+    .workflow-btn:hover {{
+        background-color: {COLORS['hover_bg']};
+    }}
+
+    .workflow-btn-title {{
+        font-size: {FONT_SIZES['xl']};
+        font-weight: {FONT_WEIGHTS['semibold']};
+        color: {COLORS['text']};
+        margin-bottom: {SPACING['xs']};
+    }}
+
+    .workflow-btn-desc {{
+        font-size: {FONT_SIZES['sm']};
+        color: {COLORS['text_muted']};
+    }}
+
+    /* Step indicator / breadcrumb */
+    .step-indicator {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: {SPACING['sm']};
         margin-bottom: {SPACING['xl']};
-        padding: 3px;
+        padding: {SPACING['md']} 0;
+        border-bottom: {BORDERS['width']} solid {COLORS['border_light']};
     }}
 
-    .progress-fill {{
-        height: 100%;
-        background-image: linear-gradient(
-            to right,
-            {COLOR_OK} 8px,
-            transparent 2px
-        );
-        background-size: 12px 100%;
-        transition: width 400ms ease;
+    .step-item {{
+        display: flex;
+        align-items: center;
+        gap: {SPACING['xs']};
     }}
 
-    /* ============================================
-       EXPANDERS / SECTIONS - Beveled borders
-       ============================================ */
-
-    .stExpander {{
-        border: 1px solid {BLACK} !important;
-        border-radius: 0 !important;
-        margin-bottom: {SPACING['md']} !important;
-        background-color: {WHITE} !important;
-        box-shadow: {SHADOWS['bevel_raised']} !important;
+    .step-number {{
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: {FONT_SIZES['xs']};
+        font-weight: {FONT_WEIGHTS['semibold']};
+        border: {BORDERS['width']} solid {COLORS['border_light']};
+        border-radius: {BORDERS['radius']};
     }}
 
-    .stExpander:hover {{
-        background-color: {COLORS['secondary_bg']} !important;
+    .step-number.active {{
+        background-color: {COLORS['primary']};
+        color: {COLORS['text_light']};
+        border-color: {COLORS['primary']};
     }}
 
-    details[open] summary {{
-        border-bottom: 1px solid {BLACK} !important;
-        margin-bottom: {SPACING['md']} !important;
-        padding-bottom: {SPACING['sm']} !important;
+    .step-number.complete {{
+        background-color: {COLORS['primary']};
+        color: {COLORS['text_light']};
+        border-color: {COLORS['primary']};
     }}
 
-    summary {{
-        font-size: {FONT_SIZES['sm']} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
-        color: {BLACK} !important;
-        letter-spacing: {LETTER_SPACING['normal']} !important;
-        padding: {SPACING['md']} !important;
-        line-height: 1.4 !important;
-        background-color: {WHITE} !important;
+    .step-label {{
+        font-size: {FONT_SIZES['xs']};
+        color: {COLORS['text_muted']};
     }}
 
-    summary:hover {{
-        background-color: {COLORS['secondary_bg']} !important;
+    .step-label.active {{
+        color: {COLORS['text']};
+        font-weight: {FONT_WEIGHTS['medium']};
     }}
 
-    /* ============================================
-       FILE UPLOADER - Monochrome styling
-       ============================================ */
-
-    .stFileUploader label,
-    [data-testid="stFileUploader"] label {{
-        color: {BLACK} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
+    .step-separator {{
+        width: 24px;
+        height: 1px;
+        background-color: {COLORS['border_light']};
     }}
 
-    .stFileUploader [data-testid="stFileUploadDropzone"],
-    [data-testid="stFileUploaderDropzone"] {{
-        background-color: {COLORS['secondary_bg']} !important;
-        border: 1px dashed {BLACK} !important;
-        border-radius: 0 !important;
-        box-shadow: {SHADOWS['inset']} !important;
+    /* Page title */
+    .page-title {{
+        font-size: {FONT_SIZES['2xl']};
+        font-weight: {FONT_WEIGHTS['semibold']};
+        color: {COLORS['text']};
+        margin-bottom: {SPACING['xs']};
+        text-align: center;
     }}
 
-    .stFileUploader [data-testid="stFileUploadDropzone"]:hover,
-    [data-testid="stFileUploaderDropzone"]:hover {{
-        background-color: {WHITE} !important;
+    .page-subtitle {{
+        font-size: {FONT_SIZES['sm']};
+        color: {COLORS['text_muted']};
+        margin-bottom: {SPACING['xl']};
+        text-align: center;
     }}
 
-    /* File uploader text - make all text black */
-    [data-testid="stFileUploaderDropzone"] span,
-    [data-testid="stFileUploaderDropzone"] p,
-    [data-testid="stFileUploaderDropzone"] small,
-    .stFileUploader span,
-    .stFileUploader p {{
-        color: {BLACK} !important;
+    /* Section headers */
+    .section-title {{
+        font-size: {FONT_SIZES['sm']};
+        font-weight: {FONT_WEIGHTS['semibold']};
+        color: {COLORS['text']};
+        text-transform: uppercase;
+        letter-spacing: {LETTER_SPACING['wide']};
+        margin: {SPACING['lg']} 0 {SPACING['md']} 0;
+        padding-bottom: {SPACING['sm']};
+        border-bottom: {BORDERS['width']} solid {COLORS['border_light']};
+        text-align: center;
     }}
 
-    /* Override blue link color in file uploader */
-    [data-testid="stFileUploaderDropzone"] a,
-    [data-testid="stFileUploaderDropzoneInstructions"] span {{
-        color: {BLACK} !important;
-        text-decoration: underline !important;
-    }}
-
-    /* File uploader icon */
-    [data-testid="stFileUploaderDropzone"] svg {{
-        stroke: {BLACK} !important;
-        fill: none !important;
-    }}
-
-    /* ============================================
-       BUTTONS - Beveled 3D style
-       Using data-testid for Streamlit specificity
-       ============================================ */
-
-    /* All buttons base reset */
-    button[data-testid^="stBaseButton"],
-    .stButton > button,
-    .stDownloadButton > button,
-    [data-testid="stFileUploaderDropzone"] > button {{
-        background-color: {ACCENT} !important;
-        color: {BLACK} !important;
-        border: 1px solid {BLACK} !important;
-        border-radius: 0 !important;
+    /* All buttons - minimal style */
+    .stButton button {{
+        background-color: {COLORS['surface']} !important;
+        color: {COLORS['text']} !important;
+        border: {BORDERS['width']} solid {COLORS['border']} !important;
+        border-radius: {BORDERS['radius']} !important;
         font-family: {FONTS['primary']} !important;
         font-size: {FONT_SIZES['sm']} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
-        padding: 8px 16px !important;
-        text-transform: uppercase !important;
+        font-weight: {FONT_WEIGHTS['medium']} !important;
+        padding: 10px 20px !important;
+        text-transform: none !important;
         letter-spacing: {LETTER_SPACING['normal']} !important;
-        box-shadow: inset 1px 1px 0 {ACCENT_LIGHT},
-                    inset -1px -1px 0 {ACCENT_DARK},
-                    2px 2px 0 {BLACK} !important;
         transition: all {TRANSITIONS['fast']} !important;
+        box-shadow: none !important;
+    }}
+
+    .stButton button:hover {{
+        background-color: {COLORS['hover_bg']} !important;
+        color: {COLORS['text']} !important;
+        border-color: {COLORS['border']} !important;
+    }}
+
+    .stButton button[kind="primary"] {{
+        background-color: {COLORS['primary']} !important;
+        color: {COLORS['text_light']} !important;
+        border: {BORDERS['width']} solid {COLORS['primary']} !important;
+    }}
+
+    .stButton button[kind="primary"]:hover {{
+        background-color: #333333 !important;
+        border-color: #333333 !important;
+    }}
+
+    .stButton button:disabled {{
+        opacity: 0.4 !important;
+        cursor: not-allowed !important;
+    }}
+
+    /* Download button */
+    .stDownloadButton button {{
+        background-color: {COLORS['primary']} !important;
+        color: {COLORS['text_light']} !important;
+        border: {BORDERS['width']} solid {COLORS['primary']} !important;
+        border-radius: {BORDERS['radius']} !important;
+    }}
+
+    .stDownloadButton button:hover {{
+        background-color: #333333 !important;
+        border-color: #333333 !important;
+    }}
+
+    /* File uploader - unified drop zone */
+    [data-testid="stFileUploader"] {{
+        max-width: 480px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+    }}
+
+    [data-testid="stFileUploader"] label {{
+        color: {COLORS['text']} !important;
+        font-weight: {FONT_WEIGHTS['medium']} !important;
+        font-size: {FONT_SIZES['sm']} !important;
+    }}
+
+    /* Dropzone: force vertical centered layout */
+    section[data-testid="stFileUploaderDropzone"] {{
+        background-color: {COLORS['surface']} !important;
+        border: 2px dashed {COLORS['border_light']} !important;
+        border-radius: {BORDERS['radius']} !important;
+        padding: {SPACING['2xl']} {SPACING['xl']} !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: {SPACING['md']} !important;
         cursor: pointer !important;
+        transition: border-color 0.15s ease, background-color 0.15s ease !important;
+        min-height: 180px !important;
     }}
 
-    button[data-testid^="stBaseButton"]:hover,
-    .stButton > button:hover,
-    [data-testid="stFileUploaderDropzone"] > button:hover {{
-        background-color: {ACCENT_LIGHT} !important;
+    /* Dropzone hover */
+    section[data-testid="stFileUploaderDropzone"]:hover {{
+        border-color: {COLORS['border']} !important;
+        background-color: {COLORS['hover_bg']} !important;
     }}
 
-    button[data-testid^="stBaseButton"]:active,
-    .stButton > button:active,
-    [data-testid="stFileUploaderDropzone"] > button:active {{
-        background-color: {ACCENT_DARK} !important;
-        box-shadow: inset -1px -1px 0 {ACCENT_LIGHT},
-                    inset 1px 1px 0 {ACCENT_DARK} !important;
-        transform: translate(2px, 2px) !important;
+    /* Instructions container (icon + text) - full width centered */
+    [data-testid="stFileUploaderDropzoneInstructions"] {{
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        text-align: center !important;
+        gap: {SPACING['sm']} !important;
+        width: 100% !important;
     }}
 
-    /* Primary button (blue - OK/execute) */
-    button[data-testid="stBaseButton-primary"],
-    .stButton > button[kind="primary"] {{
-        background-color: {COLOR_OK} !important;
-        color: {WHITE} !important;
-        box-shadow: inset 1px 1px 0 {COLOR_OK_LIGHT},
-                    inset -1px -1px 0 {COLOR_OK_DARK},
-                    2px 2px 0 {BLACK} !important;
+    /* The icon container */
+    [data-testid="stFileUploaderDropzoneInstructions"] > span {{
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }}
 
-    button[data-testid="stBaseButton-primary"]:hover,
-    .stButton > button[kind="primary"]:hover {{
-        background-color: {COLOR_OK_LIGHT} !important;
+    /* Upload icon SVG */
+    [data-testid="stFileUploaderDropzoneInstructions"] svg {{
+        width: 40px !important;
+        height: 40px !important;
+        color: {COLORS['text_muted']} !important;
     }}
 
-    button[data-testid="stBaseButton-primary"]:active,
-    .stButton > button[kind="primary"]:active {{
-        background-color: {COLOR_OK_DARK} !important;
-        box-shadow: inset -1px -1px 0 {COLOR_OK_LIGHT},
-                    inset 1px 1px 0 {COLOR_OK_DARK} !important;
+    /* Text container inside instructions */
+    [data-testid="stFileUploaderDropzoneInstructions"] > div {{
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        text-align: center !important;
     }}
 
-    /* Download button (green - success) */
-    .stDownloadButton > button {{
-        background-color: {COLOR_SUCCESS} !important;
-        color: {WHITE} !important;
-        border: 1px solid {BLACK} !important;
-        border-radius: 0 !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
-        box-shadow: inset 1px 1px 0 {COLOR_SUCCESS_LIGHT},
-                    inset -1px -1px 0 {COLOR_SUCCESS_DARK},
-                    2px 2px 0 {BLACK} !important;
+    /* "Drag and drop" text */
+    [data-testid="stFileUploaderDropzoneInstructions"] > div > span:first-child {{
+        font-size: {FONT_SIZES['base']} !important;
+        font-weight: {FONT_WEIGHTS['medium']} !important;
+        color: {COLORS['text']} !important;
+        text-align: center !important;
     }}
 
-    .stDownloadButton > button:hover {{
-        background-color: {COLOR_SUCCESS_LIGHT} !important;
+    /* "Limit 5GB..." subtext */
+    [data-testid="stFileUploaderDropzoneInstructions"] > div > span:last-child {{
+        font-size: {FONT_SIZES['xs']} !important;
+        color: {COLORS['text_muted']} !important;
+        text-align: center !important;
     }}
 
-    .stDownloadButton > button:active {{
-        background-color: {COLOR_SUCCESS_DARK} !important;
-        box-shadow: inset -1px -1px 0 {COLOR_SUCCESS_LIGHT},
-                    inset 1px 1px 0 {COLOR_SUCCESS_DARK} !important;
+    /* Browse files button - catch ALL buttons inside dropzone */
+    section[data-testid="stFileUploaderDropzone"] button {{
+        background-color: transparent !important;
+        color: {COLORS['text']} !important;
+        border: {BORDERS['width']} solid {COLORS['border']} !important;
+        border-radius: 0px !important;
+        font-size: {FONT_SIZES['xs']} !important;
+        font-weight: {FONT_WEIGHTS['medium']} !important;
+        padding: 8px 24px !important;
+        cursor: pointer !important;
+        transition: background-color 0.15s ease !important;
+        margin: 0 !important;
+        box-shadow: none !important;
     }}
 
-    /* ============================================
-       TEXT INPUTS - Inset beveled
-       ============================================ */
+    section[data-testid="stFileUploaderDropzone"] button:hover {{
+        background-color: {COLORS['hover_bg']} !important;
+        color: {COLORS['text']} !important;
+    }}
 
-    .stTextInput label, .stNumberInput label {{
-        color: {BLACK} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
+    /* Text inputs */
+    .stTextInput label, .stNumberInput label, .stSelectbox label {{
+        color: {COLORS['text']} !important;
+        font-weight: {FONT_WEIGHTS['medium']} !important;
+        font-size: {FONT_SIZES['sm']} !important;
     }}
 
     .stTextInput input, .stNumberInput input {{
-        background-color: {COLORS['secondary_bg']} !important;
-        border: 1px solid {BLACK} !important;
-        border-radius: 0 !important;
-        color: {BLACK} !important;
+        background-color: {COLORS['surface']} !important;
+        border: {BORDERS['width']} solid {COLORS['border']} !important;
+        border-radius: {BORDERS['radius']} !important;
+        color: {COLORS['text']} !important;
         font-family: {FONTS['primary']} !important;
-        box-shadow: {SHADOWS['inset']} !important;
     }}
 
     .stTextInput input:focus, .stNumberInput input:focus {{
-        background-color: {WHITE} !important;
-        outline: none !important;
-        box-shadow: {SHADOWS['inset']} !important;
+        border-color: {COLORS['text_muted']} !important;
+        box-shadow: none !important;
     }}
 
-    /* ============================================
-       TABS - hybrid.css style
-       Using data-testid for Streamlit specificity
-       ============================================ */
-
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 0 !important;
-        background-color: transparent !important;
-        border-bottom: 1px solid {BLACK} !important;
+    /* Select box */
+    .stSelectbox [data-baseweb="select"] {{
+        border: {BORDERS['width']} solid {COLORS['border']} !important;
+        border-radius: {BORDERS['radius']} !important;
     }}
 
-    .stTabs [data-baseweb="tab"],
-    button[data-testid="stTab"] {{
-        background-color: {COLORS['secondary_bg']} !important;
-        border: 1px solid {BLACK} !important;
-        border-bottom: none !important;
-        border-radius: 0 !important;
-        color: {BLACK} !important;
-        font-weight: {FONT_WEIGHTS['semibold']} !important;
-        padding: 8px 16px !important;
-        margin-right: -1px !important;
-        margin-bottom: -1px !important;
-        box-shadow: inset 1px 1px 0 {LIGHT_GREY},
-                    inset -1px 0 0 {DARK_GREY} !important;
-        text-transform: none !important;
+    /* Checkbox */
+    .stCheckbox label {{
+        color: {COLORS['text']} !important;
+        font-size: {FONT_SIZES['sm']} !important;
     }}
 
-    .stTabs [data-baseweb="tab"]:hover,
-    button[data-testid="stTab"]:hover {{
-        background-color: {WHITE} !important;
+    /* Slider */
+    .stSlider label {{
+        color: {COLORS['text']} !important;
+        font-weight: {FONT_WEIGHTS['medium']} !important;
+        font-size: {FONT_SIZES['sm']} !important;
     }}
 
-    .stTabs [aria-selected="true"],
-    button[data-testid="stTab"][aria-selected="true"] {{
-        background-color: {WHITE} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
-        z-index: 1 !important;
-        position: relative !important;
-        box-shadow: inset 1px 1px 0 {LIGHT_GREY},
-                    inset -1px 0 0 {DARK_GREY} !important;
-    }}
-
-    .stTabs [data-baseweb="tab-panel"] {{
-        border: 1px solid {BLACK} !important;
-        border-top: none !important;
-        border-radius: 0 !important;
-        background: {WHITE} !important;
-        padding: {SPACING['md']} !important;
-    }}
-
-    /* ============================================
-       DATAFRAME / TABLE
-       ============================================ */
-
+    /* Dataframe styling */
     .stDataFrame {{
-        border: 1px solid {BLACK} !important;
-        border-radius: 0 !important;
-        overflow: hidden !important;
+        border: {BORDERS['width']} solid {COLORS['border']} !important;
+        border-radius: {BORDERS['radius']} !important;
     }}
 
     .stDataFrame td, .stDataFrame th {{
-        color: {BLACK} !important;
-        background-color: {WHITE} !important;
-        border: 1px solid {BLACK} !important;
+        color: {COLORS['text']} !important;
+        background-color: {COLORS['surface']} !important;
+        border-color: {COLORS['border_light']} !important;
         font-size: {FONT_SIZES['sm']} !important;
-        padding: 8px !important;
-        line-height: 1.5 !important;
+        padding: 8px 12px !important;
     }}
 
     .stDataFrame th {{
-        background-color: {COLORS['secondary_bg']} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
+        background-color: {COLORS['grid_header']} !important;
+        font-weight: {FONT_WEIGHTS['semibold']} !important;
         text-transform: uppercase !important;
         font-size: {FONT_SIZES['xs']} !important;
         letter-spacing: {LETTER_SPACING['normal']} !important;
-        box-shadow: inset 1px 1px 0 {LIGHT_GREY},
-                    inset -1px -1px 0 {DARK_GREY} !important;
     }}
 
-    /* ============================================
-       ALERTS / STATUS BOXES - Beveled styling
-       ============================================ */
-
-    /* Base alert styling */
-    .stAlert, [data-testid="stAlert"],
-    [data-testid="stNotification"] {{
-        background-color: {COLORS['secondary_bg']} !important;
-        border: 1px solid {BLACK} !important;
-        border-left: 4px solid {BLACK} !important;
-        border-radius: 0 !important;
-        color: {BLACK} !important;
-        box-shadow: {SHADOWS['inset']} !important;
+    /* Alert/Info boxes */
+    .stAlert, [data-testid="stAlert"] {{
+        background-color: {COLORS['surface']} !important;
+        border: {BORDERS['width']} solid {COLORS['border']} !important;
+        border-radius: {BORDERS['radius']} !important;
+        color: {COLORS['text']} !important;
+        text-align: center !important;
+        max-width: 480px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
     }}
 
-    /* Remove default colored indicators */
-    .stAlert div[data-testid] > div:first-child,
-    [data-testid="stAlert"] > div:first-child {{
-        background-color: transparent !important;
+    /* Success message */
+    .stSuccess, [data-testid="stSuccess"] {{
+        background-color: {COLORS['surface']} !important;
+        border: {BORDERS['width']} solid {COLORS['primary']} !important;
     }}
 
-    /* Success message (green) */
-    .stSuccess, [data-testid="stSuccess"],
-    [data-testid="stNotificationContentSuccess"] {{
-        background-color: {COLOR_SUCCESS} !important;
-        color: {WHITE} !important;
-        border: 1px solid {BLACK} !important;
-        border-left: 4px solid {COLOR_SUCCESS_DARK} !important;
-        box-shadow: inset 1px 1px 0 {COLOR_SUCCESS_LIGHT},
-                    inset -1px -1px 0 {COLOR_SUCCESS_DARK} !important;
+    /* Error message */
+    .stError, [data-testid="stError"] {{
+        background-color: {COLORS['surface']} !important;
+        border-color: {COLORS['error']} !important;
     }}
 
-    /* Error message (red border, white bg) */
-    .stError, [data-testid="stError"],
-    [data-testid="stNotificationContentError"] {{
-        background-color: {WHITE} !important;
-        color: {BLACK} !important;
-        border: 2px solid {COLOR_DANGER} !important;
-        border-left: 4px solid {COLOR_DANGER} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
+    /* Progress bar */
+    .stProgress > div > div {{
+        background-color: {COLORS['primary']} !important;
     }}
 
-    /* Warning message (yellow) */
-    .stWarning, [data-testid="stWarning"],
-    [data-testid="stNotificationContentWarning"] {{
-        background-color: {ACCENT} !important;
-        color: {BLACK} !important;
-        border: 1px solid {BLACK} !important;
-        border-left: 4px solid {ACCENT_DARK} !important;
-        box-shadow: inset 1px 1px 0 {ACCENT_LIGHT},
-                    inset -1px -1px 0 {ACCENT_DARK} !important;
-    }}
-
-    /* Info message (grey) */
-    .stInfo, [data-testid="stInfo"],
-    [data-testid="stNotificationContentInfo"] {{
-        background-color: {COLORS['secondary_bg']} !important;
-        color: {BLACK} !important;
-        border: 1px solid {BLACK} !important;
-        border-left: 4px solid {DARK_GREY} !important;
-        box-shadow: {SHADOWS['inset']} !important;
-    }}
-
-    /* Alert text - force black on all nested elements */
-    .stAlert p, [data-testid="stAlert"] p,
-    .stAlert span, [data-testid="stAlert"] span,
-    .stAlert div, [data-testid="stAlert"] div,
-    [role="alert"] p, [role="alert"] span, [role="alert"] div,
-    [data-testid="stNotification"] p,
-    [data-testid="stNotification"] span,
-    [data-testid="stNotification"] div {{
-        color: {BLACK} !important;
-    }}
-
-    /* ============================================
-       DIVIDERS
-       ============================================ */
-
-    hr {{
-        border: none !important;
-        border-top: 1px solid {DARK_GREY} !important;
-        border-bottom: 1px solid {LIGHT_GREY} !important;
-        margin: {SPACING['md']} 0 !important;
-    }}
-
-    /* ============================================
-       SECTION TITLE
-       ============================================ */
-
-    .section-title {{
-        font-size: {FONT_SIZES['sm']};
-        color: {BLACK} !important;
-        font-weight: {FONT_WEIGHTS['bold']};
-        text-transform: uppercase;
-        letter-spacing: {LETTER_SPACING['normal']};
-        margin: {SPACING['md']} 0 {SPACING['sm']} 0;
-        padding-bottom: {SPACING['sm']};
-        border-bottom: 1px solid {BLACK};
-    }}
-
-    /* ============================================
-       MARKDOWN
-       ============================================ */
-
+    /* Markdown text */
     .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li {{
-        color: {BLACK} !important;
+        color: {COLORS['text']} !important;
     }}
 
     .stMarkdown strong {{
-        color: {BLACK} !important;
-        font-weight: {FONT_WEIGHTS['bold']} !important;
+        color: {COLORS['text']} !important;
+        font-weight: {FONT_WEIGHTS['semibold']} !important;
     }}
 
-    /* ============================================
-       CODE BLOCKS
-       ============================================ */
+    /* Caption text - center all captions */
+    [data-testid="stCaptionContainer"] {{
+        text-align: center !important;
+        width: 100% !important;
+    }}
 
-    code, pre, .stMarkdown code {{
-        background-color: {COLORS['secondary_bg']} !important;
-        color: {BLACK} !important;
-        padding: 2px 6px !important;
-        border-radius: 0 !important;
-        border: 1px solid {BLACK} !important;
+    [data-testid="stCaptionContainer"] p {{
+        color: {COLORS['text_muted']} !important;
+        font-size: {FONT_SIZES['xs']} !important;
+        text-align: center !important;
+    }}
+
+    .stCaption, .stMarkdown small {{
+        color: {COLORS['text_muted']} !important;
+        font-size: {FONT_SIZES['xs']} !important;
+        text-align: center !important;
+    }}
+
+    /* Code blocks */
+    code, pre {{
+        background-color: {COLORS['surface_alt']} !important;
+        color: {COLORS['text']} !important;
+        padding: {SPACING['xs']} {SPACING['sm']} !important;
+        border-radius: {BORDERS['radius']} !important;
+        border: {BORDERS['width']} solid {COLORS['border_light']} !important;
         font-family: {FONTS['mono']} !important;
-        box-shadow: {SHADOWS['inset']} !important;
+        font-size: {FONT_SIZES['sm']} !important;
     }}
 
-    /* ============================================
-       SELECT / DROPDOWN
-       ============================================ */
-
-    .stSelectbox [data-baseweb="select"] {{
-        background-color: {COLORS['secondary_bg']} !important;
-        border: 1px solid {BLACK} !important;
-        border-radius: 0 !important;
-        box-shadow: {SHADOWS['inset']} !important;
+    /* Dividers */
+    hr {{
+        border-color: {COLORS['border_light']} !important;
+        border-width: {BORDERS['width']} !important;
+        margin: {SPACING['lg']} 0 !important;
     }}
 
-    .stSelectbox [data-baseweb="select"]:hover {{
-        background-color: {WHITE} !important;
+    /* Navigation buttons container */
+    .nav-buttons {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: {SPACING['xl']};
+        margin-top: {SPACING['xl']};
+        border-top: {BORDERS['width']} solid {COLORS['border_light']};
     }}
 
-    /* ============================================
-       CHECKBOX / RADIO - Monochrome styling
-       ============================================ */
-
-    .stCheckbox label, .stRadio label,
-    [data-testid="stCheckbox"] label,
-    [data-testid="stRadio"] label {{
-        color: {BLACK} !important;
+    /* Excel grid preview */
+    .excel-grid {{
+        overflow-x: auto;
+        margin-bottom: 8px;
     }}
 
-    /* Radio button - outer ring */
-    [data-baseweb="radio"] > div:first-child {{
-        border-color: {BLACK} !important;
-        background-color: {WHITE} !important;
+    .excel-grid table {{
+        border-collapse: collapse;
+        width: 100%;
+        font-family: {FONTS['mono']};
+        font-size: 13px;
     }}
 
-    /* Radio button - inner dot when selected */
-    [data-baseweb="radio"] > div:first-child > div {{
-        background-color: {BLACK} !important;
+    .excel-grid th,
+    .excel-grid td {{
+        border: 1px solid #e5e7eb;
+        padding: 6px 10px;
+        text-align: center;
+        min-width: 64px;
+        height: {GRID['cell_height']};
+        white-space: nowrap;
     }}
 
-    /* Radio input styling */
-    [data-testid="stRadio"] input[type="radio"] {{
-        accent-color: {BLACK} !important;
+    .excel-grid .corner {{
+        background-color: #f3f4f6;
+        min-width: {GRID['row_header_width']};
+        width: {GRID['row_header_width']};
+        border-color: #d1d5db;
     }}
 
-    /* Checkbox - outer box (SQUARE corners) */
-    [data-baseweb="checkbox"] > div:first-child {{
-        border-color: {BLACK} !important;
-        background-color: {WHITE} !important;
-        border-radius: 0 !important;
+    .excel-grid .col-header {{
+        background-color: #f3f4f6;
+        color: #6b7280;
+        font-weight: 600;
+        font-size: 13px;
+        border-color: #d1d5db;
     }}
 
-    /* Checkbox - checkmark when selected */
-    [data-baseweb="checkbox"] > div:first-child[aria-checked="true"],
-    [data-baseweb="checkbox"][aria-checked="true"] > div:first-child {{
-        background-color: {BLACK} !important;
-        border-color: {BLACK} !important;
-        border-radius: 0 !important;
+    .excel-grid .row-header {{
+        background-color: #f3f4f6;
+        color: #9ca3af;
+        font-weight: 600;
+        min-width: {GRID['row_header_width']};
+        width: {GRID['row_header_width']};
+        border-color: #d1d5db;
     }}
 
-    /* Force square corners on all checkbox elements */
-    [data-testid="stCheckbox"] div,
-    [data-baseweb="checkbox"],
-    [data-baseweb="checkbox"] * {{
-        border-radius: 0 !important;
+    .excel-grid .cell.field-header {{
+        background-color: #eff6ff;
+        border-color: #93c5fd;
+        color: #1e3a5f;
+        font-weight: 500;
     }}
 
-    /* Checkbox input styling */
-    [data-testid="stCheckbox"] input[type="checkbox"],
-    .stCheckbox input[type="checkbox"] {{
-        accent-color: {BLACK} !important;
+    .excel-grid .cell.field-data {{
+        background-color: #f0fdf4;
+        border-color: #86efac;
+        color: #6b7280;
+        font-style: italic;
+        font-size: 12px;
     }}
 
-    /* Override Streamlit's custom checkbox/radio SVG icons */
-    [data-testid="stCheckbox"] svg,
-    [data-testid="stRadio"] svg,
-    [data-baseweb="checkbox"] svg,
-    [data-baseweb="radio"] svg {{
-        fill: {WHITE} !important;
-        stroke: {WHITE} !important;
+    .excel-grid .cell.empty {{
+        background-color: #ffffff;
+        border-color: #e5e7eb;
     }}
 
-    /* Radio/Checkbox label text - force black */
-    [data-testid="stRadio"] p,
-    [data-testid="stRadio"] span,
-    [data-testid="stCheckbox"] p,
-    [data-testid="stCheckbox"] span,
-    [data-baseweb="radio"] p,
-    [data-baseweb="radio"] span,
-    [data-baseweb="checkbox"] p,
-    [data-baseweb="checkbox"] span {{
-        color: {BLACK} !important;
+    .excel-grid td.selected,
+    .excel-grid th.selected {{
+        background-color: #fef9c3;
+        border-color: #fde047;
+        color: #713f12;
     }}
 
-    /* ============================================
-       SIDEBAR
-       ============================================ */
-
-    [data-testid="stSidebar"] {{
-        background-color: {WHITE} !important;
-        border-right: 2px solid {BLACK} !important;
+    /* Field assignment panel */
+    .assign-panel-title {{
+        font-size: {FONT_SIZES['base']};
+        font-weight: {FONT_WEIGHTS['semibold']};
+        margin-bottom: {SPACING['md']};
     }}
 
-    [data-testid="stSidebar"] .stMarkdown {{
-        color: {BLACK} !important;
+    /* Mapping grid legend */
+    .mapping-legend {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        margin-top: 12px;
+        margin-bottom: 8px;
+        font-size: {FONT_SIZES['sm']};
+    }}
+
+    .mapping-legend .legend-item {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }}
+
+    .mapping-legend .legend-swatch {{
+        width: 16px;
+        height: 16px;
+        border-radius: 2px;
+        border: 2px solid;
+    }}
+
+    .mapping-legend .legend-swatch.header {{
+        background-color: #eff6ff;
+        border-color: #93c5fd;
+    }}
+
+    .mapping-legend .legend-swatch.data {{
+        background-color: #f0fdf4;
+        border-color: #86efac;
+    }}
+
+    .mapping-legend .legend-swatch.selected {{
+        background-color: #fef9c3;
+        border-color: #fde047;
+    }}
+
+    .mapping-legend .legend-label {{
+        color: {COLORS['text_muted']};
+    }}
+
+    /* Field list styles */
+    .field-list {{
+        border: {BORDERS['width']} solid {COLORS['border']};
+    }}
+
+    .field-item {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: {SPACING['sm']} {SPACING['md']};
+        border-bottom: {BORDERS['width']} solid {COLORS['border_light']};
+    }}
+
+    .field-item:last-child {{
+        border-bottom: none;
+    }}
+
+    .field-item:hover {{
+        background-color: {COLORS['hover_bg']};
+    }}
+
+    .field-name {{
+        font-size: {FONT_SIZES['sm']};
+        font-weight: {FONT_WEIGHTS['medium']};
+    }}
+
+    .field-assigned {{
+        font-size: {FONT_SIZES['xs']};
+        color: {COLORS['text_muted']};
+        font-family: {FONTS['mono']};
+    }}
+
+    /* Remove tab styling as we're using page-based nav */
+    .stTabs {{
+        display: none !important;
+    }}
+
+    /* Hide expanders - we're using pages now */
+    .stExpander {{
+        display: none !important;
+    }}
+
+    /* Status badges */
+    .status-ready {{
+        color: {COLORS['text']};
+        font-weight: {FONT_WEIGHTS['medium']};
+    }}
+
+    .status-waiting {{
+        color: {COLORS['text_muted']};
+    }}
+
+    /* Center status rows */
+    .status-row {{
+        text-align: center;
+    }}
+
+    /* XML detection card */
+    .detection-card {{
+        border: {BORDERS['width']} solid {COLORS['border']};
+        border-radius: {BORDERS['radius']};
+        padding: {SPACING['xl']};
+        margin: {SPACING['lg']} 0;
+        text-align: center;
+    }}
+
+    .detection-filename {{
+        font-size: {FONT_SIZES['base']};
+        font-weight: {FONT_WEIGHTS['semibold']};
+        color: {COLORS['text']};
+        margin-bottom: {SPACING['xs']};
+        font-family: {FONTS['mono']};
+    }}
+
+    .detection-project {{
+        font-size: {FONT_SIZES['sm']};
+        color: {COLORS['text_muted']};
+        margin-bottom: {SPACING['lg']};
+    }}
+
+    .detection-counts {{
+        display: flex;
+        justify-content: center;
+        gap: {SPACING['3xl']};
+        margin-bottom: {SPACING['sm']};
+    }}
+
+    .detection-item {{
+        text-align: center;
+    }}
+
+    .detection-count {{
+        font-size: {FONT_SIZES['2xl']};
+        font-weight: {FONT_WEIGHTS['bold']};
+        color: {COLORS['text']};
+        line-height: 1;
+    }}
+
+    .detection-label {{
+        font-size: {FONT_SIZES['xs']};
+        color: {COLORS['text_muted']};
+        text-transform: uppercase;
+        letter-spacing: {LETTER_SPACING['wide']};
+        margin-top: {SPACING['xs']};
+    }}
+
+    .detection-fps {{
+        font-size: {FONT_SIZES['xs']};
+        color: {COLORS['text_muted']};
     }}
     </style>
     """
 
 
+def get_drag_hover_js() -> str:
+    """Return JavaScript for file upload drag-hover visual feedback."""
+    return """
+    <script>
+    (function() {
+        var doc = window.parent.document || document;
+        function setupDragHover() {
+            var dropzones = doc.querySelectorAll('section[data-testid="stFileUploaderDropzone"]');
+            dropzones.forEach(function(zone) {
+                if (zone.dataset.dragBound) return;
+                zone.dataset.dragBound = '1';
+                var counter = 0;
+                zone.addEventListener('dragenter', function(e) {
+                    e.preventDefault();
+                    counter++;
+                    zone.style.setProperty('border-color', '#000000', 'important');
+                    zone.style.setProperty('border-style', 'solid', 'important');
+                    zone.style.setProperty('background-color', '#f0f0f0', 'important');
+                });
+                zone.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                });
+                zone.addEventListener('dragleave', function(e) {
+                    counter--;
+                    if (counter <= 0) {
+                        counter = 0;
+                        zone.style.removeProperty('border-color');
+                        zone.style.removeProperty('border-style');
+                        zone.style.removeProperty('background-color');
+                    }
+                });
+                zone.addEventListener('drop', function(e) {
+                    counter = 0;
+                    zone.style.removeProperty('border-color');
+                    zone.style.removeProperty('border-style');
+                    zone.style.removeProperty('background-color');
+                });
+            });
+        }
+        // Run immediately and poll for new dropzones
+        function trySetup() {
+            try { setupDragHover(); } catch(e) {}
+        }
+        trySetup();
+        setInterval(trySetup, 1000);
+        // Also watch for DOM changes in parent document
+        try {
+            new MutationObserver(function() { trySetup(); }).observe(
+                doc.body, { childList: true, subtree: true }
+            );
+        } catch(e) {}
+    })();
+    </script>
+    """
+
+
 def inject_styles():
-    """Inject global CSS into Streamlit app."""
+    """Inject global CSS and drag-hover JS into Streamlit app."""
     st.markdown(get_global_css(), unsafe_allow_html=True)
+    # Use components.html() for JS - st.markdown doesn't execute <script> tags
+    components.html(get_drag_hover_js(), height=0, scrolling=False)

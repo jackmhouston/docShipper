@@ -29,7 +29,12 @@ class TimecodeHandler:
             self.nominal_rate = round(frame_rate)
 
     def timecode_to_seconds(self, timecode: str) -> float:
-        """Convert timecode (HH:MM:SS:FF) to seconds with high precision."""
+        """Convert timecode (HH:MM:SS:FF) to seconds with high precision.
+
+        IMPORTANT: For NTSC rates (23.976, 29.97), timecodes use the NOMINAL
+        frame rate (24, 30) for counting frames, not the actual rate.
+        The actual rate is only used for converting frames to wall-clock time.
+        """
         try:
             if not timecode or not isinstance(timecode, str):
                 raise ValueError(f"Invalid timecode: {timecode}")
@@ -44,13 +49,16 @@ class TimecodeHandler:
 
             hours, minutes, seconds, frames = map(int, parts)
 
+            # Use NOMINAL rate for timecode frame counting (24 for 23.976fps, 30 for 29.97fps)
+            # This is how timecodes work in video editing - they count using integer frame rates
             total_frames = (
-                hours * 3600 * self.frame_rate +
-                minutes * 60 * self.frame_rate +
-                seconds * self.frame_rate +
+                hours * 3600 * self.nominal_rate +
+                minutes * 60 * self.nominal_rate +
+                seconds * self.nominal_rate +
                 frames
             )
 
+            # Use ACTUAL frame rate for converting frames to wall-clock seconds
             total_seconds = total_frames / self.frame_rate
             return round(total_seconds, 6)
 
@@ -59,11 +67,21 @@ class TimecodeHandler:
             raise
 
     def seconds_to_timecode(self, total_seconds: float) -> str:
-        """Convert seconds to timecode string (HH:MM:SS:FF)."""
-        hours = int(total_seconds // 3600)
-        minutes = int((total_seconds % 3600) // 60)
-        seconds = int(total_seconds % 60)
-        frames = round((total_seconds - int(total_seconds)) * self.frame_rate)
+        """Convert seconds to timecode string (HH:MM:SS:FF).
+
+        Uses nominal rate for frame display to match industry standard timecode format.
+        """
+        # Convert seconds to total frames using actual frame rate
+        total_frames = round(total_seconds * self.frame_rate)
+
+        # Display using nominal rate (how timecodes are displayed in NLEs)
+        frames = total_frames % self.nominal_rate
+        total_secs = total_frames // self.nominal_rate
+        seconds = total_secs % 60
+        total_mins = total_secs // 60
+        minutes = total_mins % 60
+        hours = total_mins // 60
+
         return f"{hours:02}:{minutes:02}:{seconds:02}:{frames:02}"
 
     def calculate_duration(self, start_tc: str, end_tc: str) -> str:
@@ -79,13 +97,21 @@ class TimecodeHandler:
         return self.seconds_to_timecode(duration_seconds)
 
     def frames_to_timecode(self, frames: int) -> str:
-        """Convert frame count to timecode format."""
-        framerate = int(self.frame_rate)
-        frame_remainder = frames % framerate
-        seconds = (frames // framerate) % 60
-        minutes = (frames // (framerate * 60)) % 60
-        hours = frames // (framerate * 3600)
+        """Convert frame count to timecode format using nominal rate."""
+        frame_remainder = frames % self.nominal_rate
+        total_secs = frames // self.nominal_rate
+        seconds = total_secs % 60
+        minutes = (total_secs // 60) % 60
+        hours = total_secs // 3600
         return f"{hours:02}:{minutes:02}:{seconds:02}:{frame_remainder:02}"
+
+    def frames_to_seconds(self, frames: int) -> float:
+        """Convert frame count directly to seconds using actual frame rate.
+
+        This is the most accurate method when you have exact frame numbers
+        (e.g., from XML parsing) rather than timecode strings.
+        """
+        return round(frames / self.frame_rate, 6)
 
     def ms_to_timecode(self, duration_ms: float) -> str:
         """Convert milliseconds to timecode."""
