@@ -266,13 +266,19 @@ class DocShipper:
 
                 with st.spinner("Analyzing XML..."):
                     info = self._detect_xml_contents(tmp.name)
-                    st.session_state.xml_info = info
 
                     # Pre-parse video data for shotlist workflows
                     if info['video_count'] > 0:
                         parser = XMLParser()
                         st.session_state.xml_video_data = parser.parse(tmp.name)
                         st.session_state.xml_video_count = len(st.session_state.xml_video_data)
+                        # Keep landing detection count in sync with shotlist parser output.
+                        info['video_count'] = st.session_state.xml_video_count
+                    else:
+                        st.session_state.xml_video_data = None
+                        st.session_state.xml_video_count = 0
+
+                    st.session_state.xml_info = info
 
                 st.rerun()
         else:
