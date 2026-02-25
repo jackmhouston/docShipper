@@ -27,7 +27,7 @@ from ui.components import (
 )
 
 # Import processors
-from processors.video_processor import VideoProcessor, EDLParser, VideoAnalyzer
+from processors.video_processor import VideoProcessor, EDLParser, XMLParser, VideoAnalyzer
 from processors.excel_analyzer import AdvancedExcelAnalyzer
 from processors.music_processor import MusicCueProcessor
 
@@ -156,21 +156,22 @@ class DocShipper:
             col1, col2 = st.columns(2)
 
             with col1:
-                st.markdown("**EDL File**")
+                st.markdown("**EDL/XML File**")
                 edl_file = st.file_uploader(
-                    "EDL File",
-                    type=['edl'],
+                    "EDL/XML File",
+                    type=['edl', 'xml'],
                     key="edl_upload",
-                    help="Edit Decision List from your NLE"
+                    help="Edit Decision List (.edl) or Premiere XML (.xml)"
                 )
 
                 if edl_file:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.edl') as tmp_file:
+                    suffix = Path(edl_file.name).suffix.lower() or '.edl'
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
                         tmp_file.write(edl_file.getvalue())
                         st.session_state.edl_path = tmp_file.name
 
                     try:
-                        parser = EDLParser()
+                        parser = XMLParser() if suffix == '.xml' else EDLParser()
                         edl_data = parser.parse(st.session_state.edl_path)
                         st.session_state.edl_event_count = len(edl_data)
                         file_status_message(edl_file.name, f"{len(edl_data)} events")

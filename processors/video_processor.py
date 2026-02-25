@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
 import openpyxl
@@ -115,6 +116,92 @@ class EDLParser:
 
         logger.info(f"Parsed {len(edl_data)} events from EDL")
         return edl_data
+
+
+class XMLParser:
+    """Parser for Premiere Pro Final Cut Pro XML exports."""
+
+    def parse(self, xml_path: str) -> List[Dict]:
+        """Parse Premiere XML into shot rows compatible with EDL output."""
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+        except ET.ParseError as e:
+            logger.error(f"Failed to parse XML file {xml_path}: {e}")
+            return []
+
+        sequence = root.find('.//sequence')
+        if sequence is None:
+            logger.error("No sequence found in XML file")
+            return []
+
+        # Premiere XML commonly stores 24 + ntsc TRUE to represent 23.976 timelines.
+        frame_rate = 24.0
+        rate_elem = sequence.find('.//rate')
+        if rate_elem is not None:
+            timebase = rate_elem.find('timebase')
+            ntsc = rate_elem.find('ntsc')
+            if timebase is not None and timebase.text:
+                try:
+                    frame_rate = float(timebase.text)
+                except ValueError:
+                    frame_rate = 24.0
+            if ntsc is not None and ntsc.text and ntsc.text.upper() == 'TRUE':
+                if frame_rate == 24:
+                    frame_rate = 23.976
+                elif frame_rate == 30:
+                    frame_rate = 29.97
+                elif frame_rate == 60:
+                    frame_rate = 59.94
+
+        tc_handler = TimecodeHandler(frame_rate)
+        xml_data: List[Dict] = []
+        event_number = 0
+
+        for track in sequence.findall('.//video/track'):
+            for clipitem in track.findall('clipitem'):
+                enabled = clipitem.find('enabled')
+                if enabled is not None and enabled.text and enabled.text.upper() == 'FALSE':
+                    continue
+
+                name_elem = clipitem.find('name')
+                clip_name = name_elem.text if name_elem is not None else None
+                if clip_name and clip_name.lower() in ['black video', 'black', 'blank']:
+                    continue
+
+                start_elem = clipitem.find('start')
+                end_elem = clipitem.find('end')
+                in_elem = clipitem.find('in')
+                out_elem = clipitem.find('out')
+                if start_elem is None or end_elem is None:
+                    continue
+
+                try:
+                    start_frame = int(start_elem.text) if start_elem.text != '-1' else 0
+                    end_frame = int(end_elem.text) if end_elem.text != '-1' else 0
+                    in_frame = int(in_elem.text) if in_elem is not None and in_elem.text else 0
+                    out_frame = int(out_elem.text) if out_elem is not None and out_elem.text else 0
+                except (TypeError, ValueError):
+                    continue
+
+                if end_frame <= start_frame:
+                    continue
+
+                event_number += 1
+                xml_data.append({
+                    'Event': str(event_number).zfill(3),
+                    'Reel': 'AX',
+                    'Track': 'V',
+                    'Transition': 'C',
+                    'Src Start': tc_handler.frames_to_timecode(in_frame),
+                    'Src End': tc_handler.frames_to_timecode(out_frame),
+                    'Rec Start': tc_handler.frames_to_timecode(start_frame),
+                    'Rec End': tc_handler.frames_to_timecode(end_frame),
+                    'Clip Name': clip_name,
+                })
+
+        logger.info(f"Parsed {len(xml_data)} clips from XML")
+        return xml_data
 
 
 class VideoAnalyzer:
@@ -395,9 +482,17 @@ class VideoProcessor:
 
     def __init__(self):
         self.edl_parser = EDLParser()
+        self.xml_parser = XMLParser()
         self.video_analyzer = VideoAnalyzer()
         self.screenshot_generator = ScreenshotGenerator(self.video_analyzer)
         self.excel_updater = ExcelUpdater()
+
+    def _detect_file_type(self, file_path: str) -> str:
+        """Detect input list file type."""
+        ext = Path(file_path).suffix.lower()
+        if ext == '.xml':
+            return 'xml'
+        return 'edl'
 
     def process(self, edl_path: str, video_path: str, template_path: str,
                 mappings: Dict[str, str], output_dir: str,
@@ -421,10 +516,17 @@ class VideoProcessor:
                 edl_data = edl_data_override
                 logger.info(f"Using EDL data override with {len(edl_data)} rows")
             else:
-                edl_data = self.edl_parser.parse(edl_path)
-                if not edl_data:
-                    raise Exception("No data found in EDL file")
-                logger.info(f"Parsed {len(edl_data)} shots from EDL")
+                file_type = self._detect_file_type(edl_path)
+                if file_type == 'xml':
+                    edl_data = self.xml_parser.parse(edl_path)
+                    if not edl_data:
+                        raise Exception("No data found in XML file")
+                    logger.info(f"Parsed {len(edl_data)} shots from XML")
+                else:
+                    edl_data = self.edl_parser.parse(edl_path)
+                    if not edl_data:
+                        raise Exception("No data found in EDL file")
+                    logger.info(f"Parsed {len(edl_data)} shots from EDL")
 
             if progress_callback:
                 progress_callback(0.2, "Analyzing video file...")
