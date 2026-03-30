@@ -11,8 +11,6 @@ Both can be generated separately or together in the same UX flow.
 
 Status: active development, working prototype.
 
-![DocShipper landing page](output/playwright/docshipper-landing.png)
-
 ## What It Does
 
 ### Shotlist workflow
